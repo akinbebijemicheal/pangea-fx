@@ -152,6 +152,20 @@ describe('Wallets (e2e)', () => {
       expect(res.body.id).toBe(created.body.id);
     });
 
+    it.each([
+      ['an unencoded +', (p: string) => p],
+      ['an encoded %2B', (p: string) => `%2B${p.slice(1)}`],
+      ['an unencoded + with separators', (p: string) => `${p.slice(0, 4)}-${p.slice(4)}`],
+    ])('finds a wallet by phone sent in the raw URL with %s', async (_label, render) => {
+      const phone = uniquePhone();
+      const created = await http().post('/api/v1/wallets').send({ phone }).expect(201);
+      // Raw URL on purpose: in a query string an unencoded + decodes to a space.
+      const res = await http()
+        .get(`/api/v1/wallets/lookup?phone=${render(phone)}`)
+        .expect(200);
+      expect(res.body.id).toBe(created.body.id);
+    });
+
     it('returns 404 when no wallet matches', async () => {
       const res = await http()
         .get('/api/v1/wallets/lookup')

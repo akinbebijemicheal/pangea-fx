@@ -157,6 +157,7 @@
             "name": "phone",
             "required": false,
             "in": "query",
+            "description": "International format. An unencoded + (decoded as a space) is accepted.",
             "schema": {
               "example": "+2348031234567",
               "type": "string"

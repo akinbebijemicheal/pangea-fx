@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
   ApiConflictResponse,
@@ -9,6 +9,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { CreateWalletDto } from './dto/create-wallet.dto.js';
+import { LookupWalletQueryDto } from './dto/lookup-wallet.dto.js';
 import { WalletBalancesDto, WalletDto } from './dto/wallet-response.dto.js';
 import { WalletsService } from './wallets.service.js';
 
@@ -24,6 +25,18 @@ export class WalletsController {
   @ApiConflictResponse({ description: 'The email or phone already has a wallet' })
   create(@Body() dto: CreateWalletDto): Promise<WalletDto> {
     return this.wallets.create(dto);
+  }
+
+  // Declared before :id so "lookup" is not parsed as a wallet id.
+  @Get('lookup')
+  @ApiOperation({ summary: 'Find a wallet by email or phone number' })
+  @ApiOkResponse({ type: WalletDto })
+  @ApiBadRequestResponse({
+    description: 'Not exactly one of email or phone, or a value is invalid',
+  })
+  @ApiNotFoundResponse({ description: 'No wallet for this contact' })
+  lookup(@Query() query: LookupWalletQueryDto): Promise<WalletDto> {
+    return this.wallets.lookup(query);
   }
 
   @Get(':id')

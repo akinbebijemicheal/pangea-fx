@@ -1,7 +1,12 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { CURRENCIES } from '../common/currency.js';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { isUniqueViolation } from '../database/pg-errors.js';
 import type { CreateWalletDto } from './dto/create-wallet.dto.js';
+import { LOOKUP_ONE_OF_MESSAGE, type LookupWalletQueryDto } from './dto/lookup-wallet.dto.js';
 import type { BalanceDto, WalletBalancesDto, WalletDto } from './dto/wallet-response.dto.js';
 import type { BalanceRow, WalletRow } from './wallet.types.js';
 import { WalletsRepository } from './wallets.repository.js';
@@ -33,6 +38,17 @@ export class WalletsService {
     return this.toWalletDto(wallet, await this.wallets.findBalances(id));
   }
 
+  async lookup(query: LookupWalletQueryDto): Promise<WalletDto> {
+    // The DTO guarantees at least one; this enforces "not both".
+    if (query.email !== undefined && query.phone !== undefined) {
+      throw new BadRequestException([LOOKUP_ONE_OF_MESSAGE]);
+    }
+    const contact = query.email !== undefined ? { email: query.email } : { phone: query.phone! };
+    const wallet = await this.wallets.findByContact(contact);
+    if (!wallet) throw new NotFoundException('No wallet found for this contact');
+    return this.toWalletDto(wallet, await this.wallets.findBalances(wallet.id));
+  }
+
   async getBalances(id: string): Promise<WalletBalancesDto> {
     await this.requireWallet(id);
     return { walletId: id, balances: this.toBalanceDtos(await this.wallets.findBalances(id)) };
@@ -54,12 +70,7 @@ export class WalletsService {
     };
   }
 
-  /** Stable currency order regardless of row order from the DB. */
   private toBalanceDtos(rows: BalanceRow[]): BalanceDto[] {
-    const byCurrency = new Map(rows.map((r) => [r.currency, r.amount]));
-    return CURRENCIES.map((currency) => ({
-      currency,
-      amount: byCurrency.get(currency) ?? '0.00000000',
-    }));
+    return rows.map((r) => ({ currency: r.currency, amount: r.amount }));
   }
 }

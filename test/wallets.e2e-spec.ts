@@ -131,6 +131,47 @@ describe('Wallets (e2e)', () => {
     });
   });
 
+  describe('GET /api/v1/wallets/lookup', () => {
+    it('finds a wallet by email, case-insensitively', async () => {
+      const email = uniqueEmail();
+      const created = await http().post('/api/v1/wallets').send({ email }).expect(201);
+      const res = await http()
+        .get('/api/v1/wallets/lookup')
+        .query({ email: email.toUpperCase() })
+        .expect(200);
+      expect(res.body).toEqual(created.body);
+    });
+
+    it('finds a wallet by phone written with separators', async () => {
+      const phone = uniquePhone();
+      const created = await http().post('/api/v1/wallets').send({ phone }).expect(201);
+      const res = await http()
+        .get('/api/v1/wallets/lookup')
+        .query({ phone: `${phone.slice(0, 4)} ${phone.slice(4, 7)}-${phone.slice(7)}` })
+        .expect(200);
+      expect(res.body.id).toBe(created.body.id);
+    });
+
+    it('returns 404 when no wallet matches', async () => {
+      const res = await http()
+        .get('/api/v1/wallets/lookup')
+        .query({ email: uniqueEmail() })
+        .expect(404);
+      expect(res.body.message).toBe('No wallet found for this contact');
+    });
+
+    it.each([
+      [{}, 'Provide exactly one of email or phone'],
+      [{ email: 'a@b.co', phone: '+2348031234567' }, 'Provide exactly one of email or phone'],
+      [{ email: 'nope' }, 'email must be an email'],
+      [{ phone: '0803' }, 'phone must be in international E.164 format, e.g. +2348031234567'],
+      [{ email: 'a@b.co', extra: '1' }, 'property extra should not exist'],
+    ])('rejects query %j with 400', async (query, message) => {
+      const res = await http().get('/api/v1/wallets/lookup').query(query).expect(400);
+      expect(res.body.message).toEqual([message]);
+    });
+  });
+
   describe('GET /api/v1/wallets/:id/balances', () => {
     it('returns every currency in a stable order', async () => {
       const created = await http().post('/api/v1/wallets').send({ email: uniqueEmail() });
@@ -156,11 +197,11 @@ describe('Wallets (e2e)', () => {
       ).rejects.toMatchObject({ code: '23514', constraint: 'balances_amount_non_negative' });
     });
 
-    it('rejects an unsupported currency', async () => {
+    it('rejects a currency not in the currencies table', async () => {
       const id = await newWalletId();
       await expect(
         db('balances').insert({ wallet_id: id, currency: 'BTC', amount: 0 }),
-      ).rejects.toMatchObject({ code: '23514', constraint: 'balances_currency_supported' });
+      ).rejects.toMatchObject({ code: '23503', constraint: 'balances_currency_fk' });
     });
 
     it('rejects a wallet with neither email nor phone', async () => {

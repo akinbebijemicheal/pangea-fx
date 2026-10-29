@@ -11,6 +11,7 @@ import knex, { type Knex } from 'knex';
 import type { EnvironmentVariables } from '../config/env.validation.js';
 import { KNEX } from './database.constants.js';
 import { buildKnexConfig } from './knex-config.js';
+import { TransactionManager } from './transaction-manager.js';
 
 @Global()
 @Module({
@@ -21,8 +22,9 @@ import { buildKnexConfig } from './knex-config.js';
       useFactory: (config: ConfigService<EnvironmentVariables, true>): Knex =>
         knex(buildKnexConfig(config.get('DATABASE_URL', { infer: true }))),
     },
+    TransactionManager,
   ],
-  exports: [KNEX],
+  exports: [KNEX, TransactionManager],
 })
 export class DatabaseModule implements OnModuleInit, OnApplicationShutdown {
   private readonly logger = new Logger(DatabaseModule.name);

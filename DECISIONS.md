@@ -30,15 +30,18 @@ This file records the main technical decisions and the reasons for them. The REA
 
 ### Idempotency
 
-- An `Idempotency-Key` header is **required** on deposits, swaps and transfers.
-- Keys are stored in `idempotency_keys` with a hash of the request (method, path, body) and the saved response.
-- Replaying the same key and body returns the original response without running the operation again.
-- Reusing a key with a different body returns **409 Conflict**.
-- A key that is still being processed returns **409** as well, so two identical requests in flight can't both run.
+- An `Idempotency-Key` header is **required** on deposits, swaps and transfers (400 if missing or malformed).
+- The key is claimed and the money movement is committed in **one database transaction**. The first request inserts the key (its primary key is the lock), runs the handler in a savepoint and stores the response before committing.
+- A duplicate that arrives while the original is in flight blocks on that insert until the original commits, then replays its response. If it waits longer than 5s it gets **409**.
+- A completed key replays the stored status and body with `Idempotent-Replayed: true`. The handler does not run again.
+- Reusing a key for a different method, path or body (hashed as canonical JSON) returns **422**.
+- A 4xx from the handler rolls back its writes to the savepoint and is stored, so a retry gets the same answer. A 5xx or crash rolls back everything including the key, so the client can safely retry.
+- Because key and movement commit together, there is no "processing" state a crash could leave stuck, and no movement without its key (`transactions.idempotency_key` is a unique foreign key).
 
 ### Concurrency
 
 - Each money operation runs in **one DB transaction**.
+- Credits are a single atomic `UPDATE balances SET amount = amount + x`, so concurrent deposits cannot lose updates.
 - Balance rows are locked with `SELECT … FOR UPDATE` in a **fixed order** (by wallet id, then currency), so two transfers can never deadlock against each other.
 - A `CHECK (amount >= 0)` constraint on balances is the last line of defence against negative balances.
 
@@ -54,14 +57,14 @@ This file records the main technical decisions and the reasons for them. The REA
 
 ## Data model (initial)
 
-| Table              | Key columns                                                                                                                                                                                                                                     |
-| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `currencies`       | `code` (primary key, e.g. cNGN), `name`, `fiat_code` (ISO 4217 peg, used for FX), `sort_order`. Source of truth for supported stablecoins; the app refuses to boot if it disagrees with the code list.                                          |
-| `wallets`          | `id` (uuid), `email` (unique, nullable), `phone` (unique, nullable), `created_at`. At least one of email or phone is required.                                                                                                                  |
-| `balances`         | `wallet_id`, `currency` (FK to `currencies`), `amount NUMERIC(38,8) CHECK (amount >= 0)`, primary key (`wallet_id`, `currency`). One row per currency is created with the wallet.                                                               |
-| `transactions`     | `id`, `type` (deposit / swap / transfer), `source_wallet_id`, `destination_wallet_id`, `source_currency`, `source_amount`, `destination_currency`, `destination_amount`, `rate`, `idempotency_key`, `created_at`                                |
-| `idempotency_keys` | `key`, `request_hash`, `status`, `response_code`, `response_body`, `created_at`                                                                                                                                                                 |
-| `fx_rates`         | `currency` (primary key, FK to `currencies`), `units_per_usd NUMERIC(38,18) CHECK (> 0)`, `source` (live / fallback), `provider` (required for live rows), `provider_updated_at`, `refreshed_at`. Seeded with fallback quotes by the migration. |
+| Table              | Key columns                                                                                                                                                                                                                                                                                                                                                                                            |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `currencies`       | `code` (primary key, e.g. cNGN), `name`, `fiat_code` (ISO 4217 peg, used for FX), `sort_order`. Source of truth for supported stablecoins; the app refuses to boot if it disagrees with the code list.                                                                                                                                                                                                 |
+| `wallets`          | `id` (uuid), `email` (unique, nullable), `phone` (unique, nullable), `created_at`. At least one of email or phone is required.                                                                                                                                                                                                                                                                         |
+| `balances`         | `wallet_id`, `currency` (FK to `currencies`), `amount NUMERIC(38,8) CHECK (amount >= 0)`, primary key (`wallet_id`, `currency`). One row per currency is created with the wallet.                                                                                                                                                                                                                      |
+| `transactions`     | `id`, `type` (deposit / swap / transfer), `source_wallet_id` (null for deposits), `destination_wallet_id`, `source_currency`, `source_amount`, `destination_currency`, `destination_amount`, `rate NUMERIC(38,18)`, `rate_source`, `rate_provider`, `rate_refreshed_at`, `idempotency_key` (unique FK), `created_at`. A CHECK enforces the shape of each type. Indexed by wallet and time for history. |
+| `idempotency_keys` | `key` (primary key), `request_hash` (sha256), `response_status`, `response_body` (jsonb), `created_at`                                                                                                                                                                                                                                                                                                 |
+| `fx_rates`         | `currency` (primary key, FK to `currencies`), `units_per_usd NUMERIC(38,18) CHECK (> 0)`, `source` (live / fallback), `provider` (required for live rows), `provider_updated_at`, `refreshed_at`. Seeded with fallback quotes by the migration.                                                                                                                                                        |
 
 ## Build order (one conventional commit per step)
 

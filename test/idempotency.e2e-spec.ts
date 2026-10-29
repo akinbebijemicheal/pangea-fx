@@ -14,7 +14,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { Test } from '@nestjs/testing';
 import type { Knex } from 'knex';
 import request from 'supertest';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { validateEnv } from '../src/config/env.validation.js';
 import { KNEX } from '../src/database/database.constants.js';
 import { DatabaseModule } from '../src/database/database.module.js';
@@ -26,7 +26,7 @@ import { uniqueEmail } from './support/fixtures.js';
 
 // Short duplicate wait so the 409 path is testable quickly. This file runs in
 // its own worker, so the override does not leak into other test files.
-const LOCK_TIMEOUT_MS = 300;
+const LOCK_TIMEOUT_MS = 1000;
 process.env.IDEMPOTENCY_LOCK_TIMEOUT_MS = String(LOCK_TIMEOUT_MS);
 
 const PROBE_TABLE = 'idempotency_probe';
@@ -97,6 +97,13 @@ describe('Idempotency interceptor (e2e)', () => {
   const call = (body: ProbeBody, key: string) =>
     request(app.getHttpServer()).post('/probe').set('Idempotency-Key', key).send(body);
   const probeRows = async (tag: string) => (await db(PROBE_TABLE).where({ tag })).length;
+  /**
+   * Resolves once the handler for `tag` is running, i.e. its request has
+   * claimed the key and holds the lock. Firing the duplicate only then makes
+   * the overlap deterministic instead of depending on scheduling under load.
+   */
+  const handlerStarted = (tag: string) =>
+    vi.waitFor(() => expect(attempts.get(tag)).toBe(1), { timeout: 10_000, interval: 5 });
   const keyExists = async (key: string) =>
     (await db('idempotency_keys').where({ key })).length === 1;
 
@@ -150,14 +157,16 @@ describe('Idempotency interceptor (e2e)', () => {
   it('makes a duplicate wait for the in-flight original, then replays it', async () => {
     const tag = randomUUID();
     const key = randomUUID();
-    const body: ProbeBody = { mode: 'ok', tag, delayMs: LOCK_TIMEOUT_MS / 3 };
-    const original = call(body, key);
-    await new Promise((r) => setTimeout(r, 30));
+    const body: ProbeBody = { mode: 'ok', tag, delayMs: 150 };
+    // .then() sends it now: supertest requests are lazy until awaited.
+    const original = call(body, key).then((r) => r);
+    await handlerStarted(tag);
     const [a, b] = await Promise.all([original, call(body, key)]);
 
     expect([a.status, b.status]).toEqual([200, 200]);
+    expect(a.headers['idempotent-replayed']).toBeUndefined();
+    expect(b.headers['idempotent-replayed']).toBe('true');
     expect(b.body).toEqual(a.body);
-    expect([a, b].filter((r) => r.headers['idempotent-replayed'] === 'true')).toHaveLength(1);
     expect(attempts.get(tag)).toBe(1);
     expect(await probeRows(tag)).toBe(1);
   });
@@ -166,11 +175,13 @@ describe('Idempotency interceptor (e2e)', () => {
     const tag = randomUUID();
     const key = randomUUID();
     const body: ProbeBody = { mode: 'ok', tag, delayMs: LOCK_TIMEOUT_MS * 4 };
-    // Whichever request claims the key first runs; the other gives up after the timeout.
-    const results = await Promise.all([call(body, key), call(body, key)]);
-    expect(results.map((r) => r.status).sort()).toEqual([200, 409]);
-    const conflict = results.find((r) => r.status === 409)!;
-    expect(conflict.body.message).toMatch(/still being processed/);
+    // .then() sends it now: supertest requests are lazy until awaited.
+    const original = call(body, key).then((r) => r);
+    await handlerStarted(tag);
+    const duplicate = await call(body, key).expect(409);
+    expect(duplicate.body.message).toMatch(/still being processed/);
+
+    expect((await original).status).toBe(200);
     expect(attempts.get(tag)).toBe(1);
   });
 

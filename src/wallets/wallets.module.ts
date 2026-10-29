@@ -9,6 +9,6 @@ import { WalletsService } from './wallets.service.js';
   imports: [FxModule],
   controllers: [WalletsController],
   providers: [WalletsService, WalletsRepository, BalancesRepository],
-  exports: [WalletsService, BalancesRepository],
+  exports: [WalletsService, WalletsRepository, BalancesRepository],
 })
 export class WalletsModule {}

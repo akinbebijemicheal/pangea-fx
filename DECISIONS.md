@@ -76,7 +76,10 @@ This file records the main technical decisions and the reasons for them. The REA
 - **Debits lock before they check.** A swap or transfer locks every balance row it touches with one `SELECT … FOR UPDATE … ORDER BY wallet_id, currency`, checks funds, then writes. The fixed order means two transfers in opposite directions cannot deadlock. Insufficient funds is a **422**.
 - **Amounts are in the source currency.** A swap or transfer request says how much leaves the source balance; the credited amount is `amount × rate`, rounded down to 8 dp.
 - **One row per movement.** A transfer is one `transactions` row visible to both wallets; history adds a `direction` (`in` / `out` / `self`) relative to the wallet being viewed.
-- **History uses keyset pagination** on `(created_at, id)`, newest first, matching the existing indexes. It is stable while new transactions arrive, unlike offset pagination. Filters: `type` and `currency` (matches either side of the movement).
+- **History uses keyset pagination** on `(created_at, id)`, newest first. It is stable while new transactions arrive, unlike offset pagination. Filters: `type` and `currency` (matches either side of the movement).
+  - The query is a `UNION ALL` of two index scans (wallet as sender, wallet as receiver excluding its own swaps), which Postgres runs as a Merge Append of two `LIMIT`ed index scans: a page costs O(page size) regardless of history length, with no sort.
+  - The opaque cursor carries Postgres's own text form of `created_at`, keeping microseconds. A JS `Date` would round to milliseconds and could skip or repeat rows. Exact timestamp ties are broken by `id`.
+  - Known limitation: `created_at` is the transaction's start time, so a transaction that starts earlier but commits later than one already paged past can be missed by a client mid-way through paging. A commit-ordered sequence column would close this.
 - **The committed OpenAPI file is checked by a test**, which fails if `openapi.json` no longer matches what the code generates.
 
 ## Brief coverage
@@ -99,8 +102,8 @@ This file records the main technical decisions and the reasons for them. The REA
 | Reject swaps that would go negative; never process the same request twice             | Done. Locked funds check (422) and idempotency.                                               |
 | Transfer between wallets, same or different currency, auto-convert                    | Done. `POST /wallets/:id/transfers`; `toCurrency` defaults to `fromCurrency`.                 |
 | Record sender, receiver, both amounts and currencies, rate, timestamp                 | Done. One `transactions` row per movement, plus the rate's source, provider and refresh time. |
-| List a wallet's transactions newest first, paginated, filter by type and currency     | Step 7.                                                                                       |
-| Fetch a transaction by id                                                             | Step 7.                                                                                       |
+| List a wallet's transactions newest first, paginated, filter by type and currency     | Done. `GET /wallets/:id/transactions` with `direction`, cursor pagination.                    |
+| Fetch a transaction by id                                                             | Done. `GET /transactions/:id`.                                                                |
 | Current rates between all stablecoins with refresh time                               | Done. `GET /rates`.                                                                           |
 | Conventional commit history                                                           | Done.                                                                                         |
 | `yarn test` runs the full suite and passes                                            | Done. Needs Docker (or `TEST_DATABASE_URL`); a clear error explains this if missing.          |

@@ -107,9 +107,9 @@ This file records the main technical decisions and the reasons for them. The REA
 | Current rates between all stablecoins with refresh time                               | Done. `GET /rates`.                                                                           |
 | Conventional commit history                                                           | Done.                                                                                         |
 | `yarn test` runs the full suite and passes                                            | Done. Needs Docker (or `TEST_DATABASE_URL`); a clear error explains this if missing.          |
-| OpenAPI spec committed                                                                | Served at `/docs` now; committed file in step 9.                                              |
-| README: name, stack, DB choice, setup, tests, walkthrough, data model, money handling | Step 9. This file is the source.                                                              |
-| Assumptions, known limitations, what's next                                           | Step 9.                                                                                       |
+| OpenAPI spec committed                                                                | Done. `openapi.json`, checked against the code by a test.                                     |
+| README: name, stack, DB choice, setup, tests, walkthrough, data model, money handling | Done. Examples are real captured responses.                                                   |
+| Assumptions, known limitations, what's next                                           | Done, in the README.                                                                          |
 
 ## Build order (one conventional commit per step)
 

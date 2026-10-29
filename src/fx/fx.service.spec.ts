@@ -4,6 +4,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Currency } from '../common/currency.js';
 import { Money } from '../common/money.js';
 import type { CurrenciesService } from '../currencies/currencies.service.js';
+import type { TransactionManager } from '../database/transaction-manager.js';
 import type { FxRatesRepository } from './fx-rates.repository.js';
 import { FxService } from './fx.service.js';
 import type { FxRateProvider, FxRateRow, ProviderQuotes } from './fx.types.js';
@@ -114,6 +115,7 @@ describe('FxService', () => {
       { name: 'fake', info: FAKE_INFO, fetchUsdQuotes },
       { cacheTtlMs: TTL_MS, retryBackoffMs: BACKOFF_MS },
       () => new Date(now),
+      { detached: <T>(fn: () => T) => fn() } as unknown as TransactionManager,
     );
   });
 
@@ -226,6 +228,22 @@ describe('FxService', () => {
     const quotes = await service.getQuotes();
     expect(quotes.get('cGHS')?.source).toBe('cache');
     expect(quotes.get('cNGN')?.source).toBe('live');
+  });
+
+  it('never calls the provider with refresh: false, serving stale live rates as cache', async () => {
+    fetchUsdQuotes.mockResolvedValue(providerReturning());
+    await service.getQuotes();
+    now += TTL_MS + 1;
+    const quotes = await service.getQuotes({ refresh: false });
+    expect(fetchUsdQuotes).toHaveBeenCalledTimes(1);
+    expect(quotes.get('cNGN')?.source).toBe('cache');
+    expect(quotes.get('cNGN')?.unitsPerUsd.toFixed()).toBe('1500');
+  });
+
+  it('serves seed rates as fallback with refresh: false and no provider call', async () => {
+    const quotes = await service.getQuotes({ refresh: false });
+    expect(fetchUsdQuotes).not.toHaveBeenCalled();
+    expect(quotes.get('cNGN')?.source).toBe('fallback');
   });
 
   it('getRate derives a pair from the current quotes', async () => {

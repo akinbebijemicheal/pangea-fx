@@ -1,12 +1,11 @@
 import { Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { Money } from '../common/money.js';
+import { hasPgCode, PG_NUMERIC_OVERFLOW } from '../database/pg-errors.js';
 import { TransactionManager } from '../database/transaction-manager.js';
 import { toTransactionDto, type TransactionDto } from '../transactions/dto/transaction.dto.js';
 import { TransactionsRepository } from '../transactions/transactions.repository.js';
 import { BalancesRepository } from '../wallets/balances.repository.js';
 import type { CreateDepositDto } from './dto/create-deposit.dto.js';
-
-const PG_NUMERIC_OVERFLOW = '22003';
 
 @Injectable()
 export class DepositsService {
@@ -28,7 +27,7 @@ export class DepositsService {
       try {
         credited = await this.balances.credit(walletId, dto.currency, amount);
       } catch (err) {
-        if ((err as { code?: unknown }).code === PG_NUMERIC_OVERFLOW) {
+        if (hasPgCode(err, PG_NUMERIC_OVERFLOW)) {
           throw new UnprocessableEntityException(
             'Deposit would take the balance above the maximum supported amount',
           );

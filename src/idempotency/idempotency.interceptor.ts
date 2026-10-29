@@ -13,6 +13,7 @@ import { Reflector } from '@nestjs/core';
 import type { Request, Response } from 'express';
 import { from, lastValueFrom, type Observable } from 'rxjs';
 import type { EnvironmentVariables } from '../config/env.validation.js';
+import { hasPgCode, PG_LOCK_NOT_AVAILABLE } from '../database/pg-errors.js';
 import { TransactionManager } from '../database/transaction-manager.js';
 import { hashRequest } from './request-hash.js';
 
@@ -22,8 +23,6 @@ export const IDEMPOTENT_STATUS = Symbol('IDEMPOTENT_STATUS');
 
 /** Printable ASCII without spaces, 1 to 255 chars: fits UUIDs, ULIDs and most client schemes. */
 const KEY_PATTERN = /^[\x21-\x7e]{1,255}$/;
-
-const PG_LOCK_NOT_AVAILABLE = '55P03';
 
 interface IdempotencyKeyRow {
   key: string;
@@ -142,7 +141,7 @@ export class IdempotencyInterceptor implements NestInterceptor {
         }
       });
     } catch (err) {
-      if ((err as { code?: unknown }).code === PG_LOCK_NOT_AVAILABLE) {
+      if (hasPgCode(err, PG_LOCK_NOT_AVAILABLE)) {
         throw new ConflictException(
           `A request with this ${IDEMPOTENCY_HEADER} is still being processed; retry shortly`,
         );

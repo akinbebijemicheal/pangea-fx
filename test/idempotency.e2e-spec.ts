@@ -81,7 +81,8 @@ describe('Idempotency interceptor (e2e)', () => {
       controllers: [ProbeController],
     }).compile();
     app = moduleRef.createNestApplication<INestApplication<Server>>({ logger: false });
-    await app.init();
+    // Listen once so concurrent supertest calls share one server (see test-app.ts).
+    await app.listen(0, '127.0.0.1');
     db = app.get<Knex>(KNEX);
     await db.schema.createTableIfNotExists(PROBE_TABLE, (t) => {
       t.increments('id');

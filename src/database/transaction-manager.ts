@@ -31,6 +31,15 @@ export class TransactionManager {
   }
 
   /**
+   * Runs `fn` outside any active transaction, so its queries use the pool.
+   * For shared background work (like an FX refresh) that may be triggered
+   * from inside a request but must not join, or outlive, its transaction.
+   */
+  detached<T>(fn: () => T): T {
+    return this.storage.exit(fn);
+  }
+
+  /**
    * Runs `fn` in a savepoint of the active transaction: if `fn` throws, only
    * its own writes roll back and the outer transaction can still commit.
    */

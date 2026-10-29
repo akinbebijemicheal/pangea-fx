@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger, ServiceUnavailableException } from '@nestjs
 import { CURRENCIES, type Currency } from '../common/currency.js';
 import { Money } from '../common/money.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
+import { TransactionManager } from '../database/transaction-manager.js';
 import { FxRatesRepository } from './fx-rates.repository.js';
 import { allPairs, derivePair, type QuoteSet } from './fx-math.js';
 import {
@@ -42,11 +43,19 @@ export class FxService {
     @Inject(FX_RATE_PROVIDER) private readonly provider: FxRateProvider,
     @Inject(FX_OPTIONS) private readonly options: FxOptions,
     @Inject(CLOCK) private readonly clock: Clock,
+    private readonly tm: TransactionManager,
   ) {}
 
-  async getQuotes(): Promise<QuoteSet> {
+  /**
+   * Current quotes. With `refresh: false` only stored quotes are used and the
+   * provider is never called: money operations use this so a slow or failing
+   * provider cannot hold their locks or delay them. Stale quotes then report
+   * `cache`, exactly as they would after a failed refresh.
+   */
+  async getQuotes(options: { refresh?: boolean } = {}): Promise<QuoteSet> {
     let rows = await this.rates.findAll();
-    if (this.needsRefresh(rows) && this.clock().getTime() >= this.nextAttemptAt) {
+    const mayRefresh = options.refresh ?? true;
+    if (mayRefresh && this.needsRefresh(rows) && this.clock().getTime() >= this.nextAttemptAt) {
       await this.refresh();
       rows = await this.rates.findAll();
     }
@@ -66,11 +75,16 @@ export class FxService {
     return allPairs(await this.getQuotes());
   }
 
-  /** Single-flight: concurrent callers share one provider request. */
+  /**
+   * Single-flight: concurrent callers share one provider request. Detached
+   * from any request transaction, because the shared promise may outlive it.
+   */
   refresh(): Promise<void> {
-    this.inflight ??= this.fetchAndStore().finally(() => {
-      this.inflight = undefined;
-    });
+    this.inflight ??= this.tm
+      .detached(() => this.fetchAndStore())
+      .finally(() => {
+        this.inflight = undefined;
+      });
     return this.inflight;
   }
 

@@ -22,6 +22,8 @@ export async function createTestApp(
   const app = configureApp(
     moduleRef.createNestApplication<INestApplication<Server>>({ logger: false }),
   );
-  await app.init();
+  // Listen once on an ephemeral port: given an idle server, supertest calls
+  // listen() per request, which piles up listeners under concurrent requests.
+  await app.listen(0, '127.0.0.1');
   return app;
 }

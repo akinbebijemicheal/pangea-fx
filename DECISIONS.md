@@ -46,6 +46,8 @@ This file records the main technical decisions and the reasons for them. The REA
 - Credits are a single atomic `UPDATE balances SET amount = amount + x`, so concurrent deposits cannot lose updates.
 - Balance rows are locked with `SELECT … FOR UPDATE` in a **fixed order** (by wallet id, then currency), so two transfers can never deadlock against each other.
 - A `CHECK (amount >= 0)` constraint on balances is the last line of defence against negative balances.
+- **Every query inside a request uses the request's own connection** (via `TransactionManager`). A request that holds a transaction and then asks the pool for a second connection can starve the pool: 10 concurrent swaps against a pool of 10 hung forever before this rule. The one exception is the shared FX rate write, which runs detached from any request on purpose. Knex's acquire timeout is 10s, so any regression fails loudly instead of hanging.
+- Swaps and transfers share one code path (`LedgerService.move`): stored rate, lock both rows, check funds, debit, credit, record.
 
 ### FX rate failures
 
@@ -92,11 +94,11 @@ This file records the main technical decisions and the reasons for them. The REA
 | A balance per supported stablecoin                                                    | Done. Currencies table, one balance row each.                                        |
 | All balances plus total in USD                                                        | Done. `GET /wallets/:id/balances`.                                                   |
 | Deposit: balance updates immediately, transaction recorded                            | Done. Idempotent.                                                                    |
-| Swap within a wallet using FX rates                                                   | Step 5.                                                                              |
+| Swap within a wallet using FX rates                                                   | Done. `POST /wallets/:id/swaps`.                                                     |
 | Live FX preferred, fallback when the provider fails                                   | Done. Live, cache, fallback; daily cron.                                             |
-| Reject swaps that would go negative; never process the same request twice             | Idempotency done (step 4). Funds check in step 5.                                    |
+| Reject swaps that would go negative; never process the same request twice             | Done. Locked funds check (422) and idempotency.                                      |
 | Transfer between wallets, same or different currency, auto-convert                    | Step 6.                                                                              |
-| Record sender, receiver, both amounts and currencies, rate, timestamp                 | Schema done (step 4); filled by steps 5 and 6.                                       |
+| Record sender, receiver, both amounts and currencies, rate, timestamp                 | Done for swaps; transfers in step 6 use the same path.                               |
 | List a wallet's transactions newest first, paginated, filter by type and currency     | Step 7.                                                                              |
 | Fetch a transaction by id                                                             | Step 7.                                                                              |
 | Current rates between all stablecoins with refresh time                               | Done. `GET /rates`.                                                                  |

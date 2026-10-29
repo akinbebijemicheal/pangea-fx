@@ -24,6 +24,9 @@ services:
       NODE_ENV: production
       PORT: 3000
       DATABASE_URL: postgres://pangea:pangea@db:5432/pangea_fx
+      # Overridable from the shell, e.g. to try the FX fallback (see http/06-rates.http).
+      FX_PROVIDER_URL: ${FX_PROVIDER_URL:-https://open.er-api.com/v6/latest/USD}
+      FX_CACHE_TTL_SECONDS: ${FX_CACHE_TTL_SECONDS:-3600}
     ports:
       - '3000:3000'
     depends_on:

@@ -1,0 +1,40 @@
+###############################################################################
+# FX rates: all pairs, filters, source and provider
+#
+# Each rate shows its source (live / cache / fallback), the provider, when the
+# provider published it (providerUpdatedAt) and when we stored it (refreshedAt).
+###############################################################################
+
+@baseUrl = http://localhost:3000
+@api = {{baseUrl}}/api/v1
+
+### All 20 pairs between the 5 stablecoins, plus provider attribution
+GET {{api}}/rates
+
+### Everything 1 USDx buys
+GET {{api}}/rates?from=USDx
+
+### What each currency is worth in cNGN
+GET {{api}}/rates?to=cNGN
+
+### A single pair: cNGN to cGHS (derived from two USD quotes)
+GET {{api}}/rates?from=cNGN&to=cGHS
+
+### Same currency: rate is exactly 1
+GET {{api}}/rates?from=EURx&to=EURx
+
+### Unsupported currency
+# Expect 400
+GET {{api}}/rates?from=BTC
+
+###############################################################################
+# Trying the fallback chain
+#
+# Point the provider at an unreachable address and make stored rates count as
+# stale immediately, then restart the API (bash):
+#   FX_PROVIDER_URL=http://10.255.255.1/ FX_CACHE_TTL_SECONDS=1 docker compose up -d api
+# The background refresh at startup times out (3 s) and starts a 60 s backoff,
+# so GET /rates answers immediately with source "cache": the last stored live
+# rates. Swaps and transfers keep working and record rateSource "cache".
+# Restore with: docker compose up -d api
+###############################################################################

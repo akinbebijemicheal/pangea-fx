@@ -1,0 +1,93 @@
+###############################################################################
+# Swaps: convert between stablecoins inside one wallet
+#
+# The amount is what leaves the wallet, in fromCurrency. The wallet receives
+# amount x rate, rounded down to 8 decimal places.
+###############################################################################
+
+@baseUrl = http://localhost:3000
+@api = {{baseUrl}}/api/v1
+
+### 1. Create a wallet
+# @name wallet
+POST {{api}}/wallets
+Content-Type: application/json
+
+{
+  "email": "swapper-{{$timestamp}}@example.com"
+}
+
+### 2. Fund it with 1000 USDx
+POST {{api}}/wallets/{{wallet.response.body.$.id}}/deposits
+Content-Type: application/json
+Idempotency-Key: {{$guid}}
+
+{
+  "currency": "USDx",
+  "amount": "1000"
+}
+
+### 3. See the rate first (optional)
+GET {{api}}/rates?from=USDx&to=cNGN
+
+### 4. Swap 100 USDx to cNGN
+# Expect 201 with the rate applied, its source (live/cache/fallback) and provider
+POST {{api}}/wallets/{{wallet.response.body.$.id}}/swaps
+Content-Type: application/json
+Idempotency-Key: {{$guid}}
+
+{
+  "fromCurrency": "USDx",
+  "toCurrency": "cNGN",
+  "amount": "100"
+}
+
+### 5. Swap 50 USDx to EURx
+POST {{api}}/wallets/{{wallet.response.body.$.id}}/swaps
+Content-Type: application/json
+Idempotency-Key: {{$guid}}
+
+{
+  "fromCurrency": "USDx",
+  "toCurrency": "EURx",
+  "amount": "50"
+}
+
+### 6. Swap more than the balance
+# Expect 422 "Insufficient USDx balance: available 850.00000000, requested 5000.00000000"
+POST {{api}}/wallets/{{wallet.response.body.$.id}}/swaps
+Content-Type: application/json
+Idempotency-Key: {{$guid}}
+
+{
+  "fromCurrency": "USDx",
+  "toCurrency": "cGHS",
+  "amount": "5000"
+}
+
+### 7. Amount too small to convert (rounds to 0 USDx)
+# Expect 422 "amount is too small"
+POST {{api}}/wallets/{{wallet.response.body.$.id}}/swaps
+Content-Type: application/json
+Idempotency-Key: {{$guid}}
+
+{
+  "fromCurrency": "cNGN",
+  "toCurrency": "USDx",
+  "amount": "0.00000001"
+}
+
+### 8. Same currency on both sides
+# Expect 400 "toCurrency must differ from fromCurrency"
+POST {{api}}/wallets/{{wallet.response.body.$.id}}/swaps
+Content-Type: application/json
+Idempotency-Key: {{$guid}}
+
+{
+  "fromCurrency": "USDx",
+  "toCurrency": "USDx",
+  "amount": "1"
+}
+
+### 9. Balances after the swaps, with USD total
+GET {{api}}/wallets/{{wallet.response.body.$.id}}/balances

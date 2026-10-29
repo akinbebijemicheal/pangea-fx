@@ -1,0 +1,127 @@
+###############################################################################
+# Transfers: send to another wallet, in the same or a different currency
+#
+# toCurrency is optional and defaults to fromCurrency. The amount is what the
+# sender pays, in fromCurrency; the receiver gets amount x rate, rounded down.
+###############################################################################
+
+@baseUrl = http://localhost:3000
+@api = {{baseUrl}}/api/v1
+
+### 1. Sender (Lagos)
+# @name lagos
+POST {{api}}/wallets
+Content-Type: application/json
+
+{
+  "email": "lagos-{{$timestamp}}@example.com"
+}
+
+### 2. Receiver (Accra)
+# @name accra
+POST {{api}}/wallets
+Content-Type: application/json
+
+{
+  "email": "accra-{{$timestamp}}@example.com"
+}
+
+### 3. Fund the sender with 2,000,000 cNGN and 100 USDx
+POST {{api}}/wallets/{{lagos.response.body.$.id}}/deposits
+Content-Type: application/json
+Idempotency-Key: {{$guid}}
+
+{
+  "currency": "cNGN",
+  "amount": "2000000"
+}
+
+###
+POST {{api}}/wallets/{{lagos.response.body.$.id}}/deposits
+Content-Type: application/json
+Idempotency-Key: {{$guid}}
+
+{
+  "currency": "USDx",
+  "amount": "100"
+}
+
+### 4. Same-currency transfer: 25 USDx
+# Expect 201 with rate "1" and rateSource null (no conversion)
+POST {{api}}/wallets/{{lagos.response.body.$.id}}/transfers
+Content-Type: application/json
+Idempotency-Key: {{$guid}}
+
+{
+  "toWalletId": "{{accra.response.body.$.id}}",
+  "fromCurrency": "USDx",
+  "amount": "25"
+}
+
+### 5. Cross-border transfer: 150,000 cNGN arrives as cGHS
+# Expect 201 with sender, receiver, both amounts and currencies, rate and time
+# @name crossBorder
+POST {{api}}/wallets/{{lagos.response.body.$.id}}/transfers
+Content-Type: application/json
+Idempotency-Key: {{$guid}}
+
+{
+  "toWalletId": "{{accra.response.body.$.id}}",
+  "fromCurrency": "cNGN",
+  "toCurrency": "cGHS",
+  "amount": "150000"
+}
+
+### 6. The transfer, fetched by id
+GET {{api}}/transactions/{{crossBorder.response.body.$.id}}
+
+### 7. Receiver's balances: 25 USDx and the converted cGHS
+GET {{api}}/wallets/{{accra.response.body.$.id}}/balances
+
+### 8. More than the sender has
+# Expect 422 "Insufficient USDx balance"
+POST {{api}}/wallets/{{lagos.response.body.$.id}}/transfers
+Content-Type: application/json
+Idempotency-Key: {{$guid}}
+
+{
+  "toWalletId": "{{accra.response.body.$.id}}",
+  "fromCurrency": "USDx",
+  "amount": "1000"
+}
+
+### 9. Receiver does not exist
+# Expect 404 "Destination wallet ... not found"
+POST {{api}}/wallets/{{lagos.response.body.$.id}}/transfers
+Content-Type: application/json
+Idempotency-Key: {{$guid}}
+
+{
+  "toWalletId": "00000000-0000-4000-8000-000000000000",
+  "fromCurrency": "USDx",
+  "amount": "1"
+}
+
+### 10. Transfer to yourself
+# Expect 400: use a swap to change currency within one wallet
+POST {{api}}/wallets/{{lagos.response.body.$.id}}/transfers
+Content-Type: application/json
+Idempotency-Key: {{$guid}}
+
+{
+  "toWalletId": "{{lagos.response.body.$.id}}",
+  "fromCurrency": "USDx",
+  "amount": "1"
+}
+
+### 11. Receiver id is not a UUID
+# Expect 400 "toWalletId must be a wallet id (UUID)"
+POST {{api}}/wallets/{{lagos.response.body.$.id}}/transfers
+Content-Type: application/json
+Idempotency-Key: {{$guid}}
+
+{
+  "toWalletId": "accra",
+  "fromCurrency": "USDx",
+  "amount": "1"
+}

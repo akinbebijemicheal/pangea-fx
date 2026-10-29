@@ -1,0 +1,113 @@
+###############################################################################
+# Transaction history: newest first, filters, cursor pagination, lookup by id
+#
+# Requests 1-6 build a small history; the rest read it.
+###############################################################################
+
+@baseUrl = http://localhost:3000
+@api = {{baseUrl}}/api/v1
+
+### 1. Wallet A
+# @name a
+POST {{api}}/wallets
+Content-Type: application/json
+
+{
+  "email": "history-a-{{$timestamp}}@example.com"
+}
+
+### 2. Wallet B
+# @name b
+POST {{api}}/wallets
+Content-Type: application/json
+
+{
+  "email": "history-b-{{$timestamp}}@example.com"
+}
+
+### 3. A deposits 500 USDx  (A: in)
+POST {{api}}/wallets/{{a.response.body.$.id}}/deposits
+Content-Type: application/json
+Idempotency-Key: {{$guid}}
+
+{
+  "currency": "USDx",
+  "amount": "500"
+}
+
+### 4. A swaps 100 USDx to cNGN  (A: self)
+POST {{api}}/wallets/{{a.response.body.$.id}}/swaps
+Content-Type: application/json
+Idempotency-Key: {{$guid}}
+
+{
+  "fromCurrency": "USDx",
+  "toCurrency": "cNGN",
+  "amount": "100"
+}
+
+### 5. A sends 50 USDx to B as EURx  (A: out, B: in)
+# @name sent
+POST {{api}}/wallets/{{a.response.body.$.id}}/transfers
+Content-Type: application/json
+Idempotency-Key: {{$guid}}
+
+{
+  "toWalletId": "{{b.response.body.$.id}}",
+  "fromCurrency": "USDx",
+  "toCurrency": "EURx",
+  "amount": "50"
+}
+
+### 6. B sends 10 EURx back to A  (B: out, A: in)
+POST {{api}}/wallets/{{b.response.body.$.id}}/transfers
+Content-Type: application/json
+Idempotency-Key: {{$guid}}
+
+{
+  "toWalletId": "{{a.response.body.$.id}}",
+  "fromCurrency": "EURx",
+  "amount": "10"
+}
+
+### 7. A's full history, newest first, with direction in / out / self
+GET {{api}}/wallets/{{a.response.body.$.id}}/transactions
+
+### 8. B's history: the same transfer from A shows as "in"
+GET {{api}}/wallets/{{b.response.body.$.id}}/transactions
+
+### 9. Filter by type
+GET {{api}}/wallets/{{a.response.body.$.id}}/transactions?type=transfer
+
+### 10. Filter by currency (matches either side of the movement)
+GET {{api}}/wallets/{{a.response.body.$.id}}/transactions?currency=cNGN
+
+### 11. Filters combine
+GET {{api}}/wallets/{{a.response.body.$.id}}/transactions?type=transfer&currency=EURx
+
+### 12. Pagination: first page of 2
+# @name page1
+GET {{api}}/wallets/{{a.response.body.$.id}}/transactions?limit=2
+
+### 13. Next page, using nextCursor from the previous response
+# nextCursor is null on the last page
+GET {{api}}/wallets/{{a.response.body.$.id}}/transactions?limit=2&cursor={{page1.response.body.$.nextCursor}}
+
+### 14. One transaction by id
+GET {{api}}/transactions/{{sent.response.body.$.id}}
+
+### 15. Unknown transaction
+# Expect 404
+GET {{api}}/transactions/00000000-0000-4000-8000-000000000000
+
+### 16. Invalid cursor
+# Expect 400 "cursor is invalid"
+GET {{api}}/wallets/{{a.response.body.$.id}}/transactions?cursor=abc
+
+### 17. Limit out of range (1-100)
+# Expect 400
+GET {{api}}/wallets/{{a.response.body.$.id}}/transactions?limit=500
+
+### 18. Unknown type
+# Expect 400 "type must be one of: deposit, swap, transfer"
+GET {{api}}/wallets/{{a.response.body.$.id}}/transactions?type=refund

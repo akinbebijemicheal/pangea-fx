@@ -1,0 +1,20 @@
+###############################################################################
+# Health, docs and reference data
+#
+# Start the stack first:  docker compose up
+# Then click "Send Request" above any request (REST Client extension).
+###############################################################################
+
+@baseUrl = http://localhost:3000
+@api = {{baseUrl}}/api/v1
+
+### API and database health
+# Expect 200 {"status":"ok","database":"up"}
+GET {{baseUrl}}/health
+
+### OpenAPI document (also browsable at http://localhost:3000/docs)
+GET {{baseUrl}}/docs-json
+
+### Supported stablecoins, from the currencies table
+# Expect cNGN, cGHS, cXAF, USDx, EURx with their fiat pegs
+GET {{api}}/currencies

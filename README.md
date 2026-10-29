@@ -106,7 +106,7 @@ yarn test:cov      # with coverage (about 90% of lines)
 
 The e2e suite starts a throwaway Postgres 16 container with Testcontainers, runs every migration, and tests the API over HTTP. To use your own database instead, set `TEST_DATABASE_URL` to an **empty** Postgres 16 database. If neither Docker nor `TEST_DATABASE_URL` is available, the suite stops with a message saying so.
 
-**304 tests** cover, among others:
+**312 tests** cover, among others:
 
 - **Concurrency**: 10 concurrent swaps or transfers of 15 against a balance of 100 (exactly 6 succeed); 30 opposite-direction transfers across currencies (no deadlock, value conserved); 10 concurrent wallet creations with the same email (exactly one 201).
 - **Idempotency**: replays, 10 concurrent identical requests (exactly one transaction), key reuse with a different body (422), a 400 not consuming the key, a 5xx releasing it, a duplicate waiting for the in-flight original, a 409 after the wait times out, key expiry.
@@ -127,6 +127,8 @@ Recomputes every balance from the transaction log and exits 1, listing each mism
 ---
 
 ## API walkthrough
+
+**Try it yourself:** [`http/`](http/) has runnable sample requests for every endpoint and error case (VS Code REST Client or JetBrains HTTP Client). Each file creates its own wallets and chains the ids, so you can click through it top to bottom. Swagger UI at http://localhost:3000/docs works too.
 
 All examples below are **real responses** captured from the running stack (`docker compose up`) with live rates. Long ids are shortened for readability. Every `POST` that moves money needs an `Idempotency-Key` header.
 
@@ -602,6 +604,7 @@ src/
   database/       Knex, TransactionManager (AsyncLocalStorage), migrations
   common/         money maths (decimal.js), validators
 test/             e2e suites (real Postgres via Testcontainers) and helpers
+http/             runnable sample requests for every endpoint (REST Client)
 openapi.json      generated spec, checked against the code by a test
 DECISIONS.md      design decisions and the brief coverage table
 ```

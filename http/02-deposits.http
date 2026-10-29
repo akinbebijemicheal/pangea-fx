@@ -1,0 +1,129 @@
+###############################################################################
+# Deposits (simulated) and idempotency
+#
+# Every deposit needs an Idempotency-Key header. {{$guid}} makes a new one per
+# send; requests 3 and 4 use a fixed key on purpose, to show replays.
+###############################################################################
+
+@baseUrl = http://localhost:3000
+@api = {{baseUrl}}/api/v1
+
+### 1. Create a wallet to deposit into
+# @name wallet
+POST {{api}}/wallets
+Content-Type: application/json
+
+{
+  "email": "depositor-{{$timestamp}}@example.com"
+}
+
+### 2. Deposit 500 USDx
+# Expect 201 with the deposit transaction
+POST {{api}}/wallets/{{wallet.response.body.$.id}}/deposits
+Content-Type: application/json
+Idempotency-Key: {{$guid}}
+
+{
+  "currency": "USDx",
+  "amount": "500"
+}
+
+### 3. Deposit 250000 cNGN with a fixed Idempotency-Key
+# Expect 201. Send it twice: the second response is identical, with header
+# "Idempotent-Replayed: true", and the balance is credited only once.
+POST {{api}}/wallets/{{wallet.response.body.$.id}}/deposits
+Content-Type: application/json
+Idempotency-Key: demo-deposit-{{wallet.response.body.$.id}}
+
+{
+  "currency": "cNGN",
+  "amount": "250000"
+}
+
+### 4. Same Idempotency-Key, different amount
+# Expect 422 "Idempotency-Key has already been used for a different request"
+POST {{api}}/wallets/{{wallet.response.body.$.id}}/deposits
+Content-Type: application/json
+Idempotency-Key: demo-deposit-{{wallet.response.body.$.id}}
+
+{
+  "currency": "cNGN",
+  "amount": "1"
+}
+
+### 5. Check balances: USDx 500, cNGN 250000 (once), plus a USD total
+GET {{api}}/wallets/{{wallet.response.body.$.id}}/balances
+
+### 6. Exact decimals: deposit 0.1 ...
+POST {{api}}/wallets/{{wallet.response.body.$.id}}/deposits
+Content-Type: application/json
+Idempotency-Key: {{$guid}}
+
+{
+  "currency": "EURx",
+  "amount": "0.1"
+}
+
+### 7. ... then 0.2. EURx is now exactly 0.30000000 (no float drift)
+POST {{api}}/wallets/{{wallet.response.body.$.id}}/deposits
+Content-Type: application/json
+Idempotency-Key: {{$guid}}
+
+{
+  "currency": "EURx",
+  "amount": "0.2"
+}
+
+### 8. Missing Idempotency-Key
+# Expect 400 "Idempotency-Key header is required"
+POST {{api}}/wallets/{{wallet.response.body.$.id}}/deposits
+Content-Type: application/json
+
+{
+  "currency": "USDx",
+  "amount": "1"
+}
+
+### 9. Amount as a JSON number instead of a string
+# Expect 400: amounts must be decimal strings
+POST {{api}}/wallets/{{wallet.response.body.$.id}}/deposits
+Content-Type: application/json
+Idempotency-Key: {{$guid}}
+
+{
+  "currency": "USDx",
+  "amount": 100
+}
+
+### 10. More than 8 decimal places
+# Expect 400
+POST {{api}}/wallets/{{wallet.response.body.$.id}}/deposits
+Content-Type: application/json
+Idempotency-Key: {{$guid}}
+
+{
+  "currency": "USDx",
+  "amount": "1.123456789"
+}
+
+### 11. Unsupported currency
+# Expect 400 "currency must be one of: cNGN, cGHS, cXAF, USDx, EURx"
+POST {{api}}/wallets/{{wallet.response.body.$.id}}/deposits
+Content-Type: application/json
+Idempotency-Key: {{$guid}}
+
+{
+  "currency": "BTC",
+  "amount": "1"
+}
+
+### 12. Unknown wallet
+# Expect 404
+POST {{api}}/wallets/00000000-0000-4000-8000-000000000000/deposits
+Content-Type: application/json
+Idempotency-Key: {{$guid}}
+
+{
+  "currency": "USDx",
+  "amount": "1"
+}

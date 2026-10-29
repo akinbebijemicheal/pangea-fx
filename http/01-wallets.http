@@ -1,0 +1,100 @@
+###############################################################################
+# Wallets: create, duplicates, lookup, read, balances with USD total
+#
+# Run top to bottom. Later requests reuse the ids captured from earlier ones.
+###############################################################################
+
+@baseUrl = http://localhost:3000
+@api = {{baseUrl}}/api/v1
+
+### 1. Create a wallet with an email
+# Expect 201 with 5 zero balances
+# @name createAda
+POST {{api}}/wallets
+Content-Type: application/json
+
+{
+  "email": "ada-{{$timestamp}}@example.com"
+}
+
+### 2. Create a wallet with a phone number (international format; spaces and dashes are ignored)
+# Expect 201, phone stored as +233...
+# @name createKofi
+POST {{api}}/wallets
+Content-Type: application/json
+
+{
+  "phone": "+233 20 {{$randomInt 1000000 9999999}}"
+}
+
+### 3. Create a wallet with both email and phone
+# Expect 201
+POST {{api}}/wallets
+Content-Type: application/json
+
+{
+  "email": "both-{{$timestamp}}@example.com",
+  "phone": "+234 803 {{$randomInt 1000000 9999999}}"
+}
+
+### 4. Same email again (also a duplicate if you retype it in capitals)
+# Expect 409 "A wallet already exists for this email"
+POST {{api}}/wallets
+Content-Type: application/json
+
+{
+  "email": "{{createAda.response.body.$.email}}"
+}
+
+### 5. Same phone again, written differently
+# Expect 409 "A wallet already exists for this phone number"
+POST {{api}}/wallets
+Content-Type: application/json
+
+{
+  "phone": "{{createKofi.response.body.$.phone}}"
+}
+
+### 6. Neither email nor phone
+# Expect 400 "Provide an email or a phone number"
+POST {{api}}/wallets
+Content-Type: application/json
+
+{}
+
+### 7. Local (non-international) phone number
+# Expect 400 "phone must be in international E.164 format"
+POST {{api}}/wallets
+Content-Type: application/json
+
+{
+  "phone": "08031234567"
+}
+
+### 8. Get a wallet with its balances
+# Expect 200
+GET {{api}}/wallets/{{createAda.response.body.$.id}}
+
+### 9. Look a wallet up by email (case-insensitive)
+# Expect 200, same wallet as request 1
+GET {{api}}/wallets/lookup?email={{createAda.response.body.$.email}}
+
+### 10. Look a wallet up by phone
+# Expect 200, same wallet as request 2
+GET {{api}}/wallets/lookup?phone={{createKofi.response.body.$.phone}}
+
+### 11. Lookup with no match
+# Expect 404
+GET {{api}}/wallets/lookup?email=nobody-{{$timestamp}}@example.com
+
+### 12. Balances with a USD value per currency and a USD total
+# Expect 200, all zeros until you deposit (see 02-deposits.http)
+GET {{api}}/wallets/{{createAda.response.body.$.id}}/balances
+
+### 13. Unknown wallet
+# Expect 404
+GET {{api}}/wallets/00000000-0000-4000-8000-000000000000
+
+### 14. Malformed wallet id
+# Expect 400
+GET {{api}}/wallets/not-a-uuid

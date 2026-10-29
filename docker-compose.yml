@@ -1,0 +1,35 @@
+name: pangea-fx
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: pangea
+      POSTGRES_PASSWORD: pangea
+      POSTGRES_DB: pangea_fx
+    ports:
+      # Host port 5433 by default so a locally installed Postgres on 5432 does not collide.
+      - '${DB_PORT:-5433}:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U pangea -d pangea_fx']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgres://pangea:pangea@db:5432/pangea_fx
+    ports:
+      - '3000:3000'
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:

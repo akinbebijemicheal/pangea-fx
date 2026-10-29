@@ -28,7 +28,7 @@ export class RatesController {
         (p) => (!query.from || p.from === query.from) && (!query.to || p.to === query.to),
       );
     }
-    return { rates: pairs.map(toRateDto) };
+    return { provider: this.fx.providerInfo, rates: pairs.map(toRateDto) };
   }
 }
 
@@ -38,6 +38,8 @@ function toRateDto(p: PairRate): RateDto {
     to: p.to,
     rate: toRateString(p.rate),
     source: p.source,
+    provider: p.provider,
+    providerUpdatedAt: p.providerUpdatedAt?.toISOString() ?? null,
     refreshedAt: p.refreshedAt.toISOString(),
   };
 }

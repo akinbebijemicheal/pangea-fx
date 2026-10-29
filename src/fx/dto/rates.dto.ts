@@ -42,13 +42,47 @@ export class RateDto {
   source!: RateSource;
 
   @ApiProperty({
+    type: String,
+    nullable: true,
+    example: 'open.er-api.com',
+    description: 'Who supplied the rate; null for fixed fallback rates',
+  })
+  provider!: string | null;
+
+  @ApiProperty({
+    type: String,
     format: 'date-time',
-    description: 'When the older of the two underlying quotes was stored',
+    nullable: true,
+    description:
+      'When the provider published the rate (the older leg of the pair); null for fallback rates',
+  })
+  providerUpdatedAt!: string | null;
+
+  @ApiProperty({
+    format: 'date-time',
+    description: 'When we last stored the older of the two underlying quotes',
   })
   refreshedAt!: string;
 }
 
+export class ProviderInfoDto {
+  @ApiProperty({ example: 'open.er-api.com' })
+  name!: string;
+
+  @ApiProperty({ example: 'https://www.exchangerate-api.com' })
+  url!: string;
+
+  @ApiProperty({ example: 'daily', description: 'How often the provider publishes new rates' })
+  updateFrequency!: string;
+
+  @ApiProperty({ type: String, nullable: true, example: 'Rates By Exchange Rate API' })
+  attribution!: string | null;
+}
+
 export class RatesResponseDto {
+  @ApiProperty({ type: ProviderInfoDto, description: 'The configured live rate provider' })
+  provider!: ProviderInfoDto;
+
   @ApiProperty({ type: [RateDto] })
   rates!: RateDto[];
 }

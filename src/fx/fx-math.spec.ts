@@ -21,7 +21,9 @@ function quotes(overrides: Partial<Record<Currency, Partial<UsdQuote>>> = {}): Q
       {
         currency: c,
         unitsPerUsd: new Money(perUsd[c]),
-        source: 'live',
+        source: 'live' as const,
+        provider: 'test',
+        providerUpdatedAt: T0,
         refreshedAt: T1,
         ...overrides[c],
       },
@@ -52,6 +54,22 @@ describe('derivePair', () => {
     );
     expect(pair.source).toBe('fallback');
     expect(pair.refreshedAt).toEqual(T0);
+  });
+
+  it('carries the provider and the older provider publish time', () => {
+    const pair = derivePair(quotes({ cGHS: { providerUpdatedAt: T1 } }), 'cGHS', 'USDx');
+    expect(pair.provider).toBe('test');
+    expect(pair.providerUpdatedAt).toEqual(T0);
+  });
+
+  it('has no provider or publish time when either leg is a fallback rate', () => {
+    const pair = derivePair(
+      quotes({ cGHS: { source: 'fallback', provider: null, providerUpdatedAt: null } }),
+      'cGHS',
+      'USDx',
+    );
+    expect(pair.provider).toBeNull();
+    expect(pair.providerUpdatedAt).toBeNull();
   });
 
   it('keeps cross rates consistent: no value from a round trip through a third currency', () => {

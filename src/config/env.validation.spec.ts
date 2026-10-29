@@ -45,3 +45,25 @@ describe('validateEnv DB_MIGRATE_ON_BOOT', () => {
     );
   });
 });
+
+describe('validateEnv FX refresh settings', () => {
+  it('defaults to a daily 00:10 UTC refresh and a refresh at boot', () => {
+    const env = validateEnv({ DATABASE_URL });
+    expect(env.FX_REFRESH_CRON).toBe('10 0 * * *');
+    expect(env.FX_REFRESH_ON_BOOT).toBe(true);
+  });
+
+  it.each(['off', '0 */6 * * *', '*/30 * * * * *'])('accepts FX_REFRESH_CRON=%s', (cron) => {
+    expect(validateEnv({ DATABASE_URL, FX_REFRESH_CRON: cron }).FX_REFRESH_CRON).toBe(cron);
+  });
+
+  it.each(['daily', '61 * * * *', ''])('rejects FX_REFRESH_CRON=%j', (cron) => {
+    expect(() => validateEnv({ DATABASE_URL, FX_REFRESH_CRON: cron })).toThrow(/FX_REFRESH_CRON/);
+  });
+
+  it('parses FX_REFRESH_ON_BOOT=false', () => {
+    expect(validateEnv({ DATABASE_URL, FX_REFRESH_ON_BOOT: 'false' }).FX_REFRESH_ON_BOOT).toBe(
+      false,
+    );
+  });
+});

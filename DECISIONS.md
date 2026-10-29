@@ -45,7 +45,8 @@ This file records the main technical decisions and the reasons for them. The REA
 ### FX rate failures
 
 - Fresh live quotes (younger than `FX_CACHE_TTL_SECONDS`) → refresh from the provider → on failure, the last stored live quotes (`cache`) → the fixed seed quotes (`fallback`). A swap or transfer is never blocked because the provider is down.
-- Refreshes are lazy (on read) and single-flight: concurrent requests share one provider call.
+- Refreshes happen three ways, all single-flight (concurrent callers share one provider call): a daily cron at 00:10 UTC (`FX_REFRESH_CRON`), just after open.er-api.com publishes; a background refresh at boot (`FX_REFRESH_ON_BOOT`); and lazily on read when stored rates outlive the TTL, which covers a missed cron run.
+- Sources are always visible: `/rates` names the provider, its URL, update frequency and the attribution its terms require, and every rate carries `provider` and `providerUpdatedAt` (when the provider published it). open.er-api.com publishes once a day, so "live" means its latest daily rate.
 - After a failure the provider is not called again for `FX_RETRY_BACKOFF_SECONDS`, so an outage costs one timeout, not one per request.
 - A malformed or partial provider response counts as a failure; nothing is stored.
 - Responses show each rate's `source` (`live` / `cache` / `fallback`) and `refreshedAt`. A pair reports its weaker leg and older refresh time.
@@ -53,14 +54,14 @@ This file records the main technical decisions and the reasons for them. The REA
 
 ## Data model (initial)
 
-| Table              | Key columns                                                                                                                                                                                                      |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `currencies`       | `code` (primary key, e.g. cNGN), `name`, `fiat_code` (ISO 4217 peg, used for FX), `sort_order`. Source of truth for supported stablecoins; the app refuses to boot if it disagrees with the code list.           |
-| `wallets`          | `id` (uuid), `email` (unique, nullable), `phone` (unique, nullable), `created_at`. At least one of email or phone is required.                                                                                   |
-| `balances`         | `wallet_id`, `currency` (FK to `currencies`), `amount NUMERIC(38,8) CHECK (amount >= 0)`, primary key (`wallet_id`, `currency`). One row per currency is created with the wallet.                                |
-| `transactions`     | `id`, `type` (deposit / swap / transfer), `source_wallet_id`, `destination_wallet_id`, `source_currency`, `source_amount`, `destination_currency`, `destination_amount`, `rate`, `idempotency_key`, `created_at` |
-| `idempotency_keys` | `key`, `request_hash`, `status`, `response_code`, `response_body`, `created_at`                                                                                                                                  |
-| `fx_rates`         | `currency` (primary key, FK to `currencies`), `units_per_usd NUMERIC(38,18) CHECK (> 0)`, `source` (live / fallback), `provider_updated_at`, `refreshed_at`. Seeded with fallback quotes by the migration.       |
+| Table              | Key columns                                                                                                                                                                                                                                     |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `currencies`       | `code` (primary key, e.g. cNGN), `name`, `fiat_code` (ISO 4217 peg, used for FX), `sort_order`. Source of truth for supported stablecoins; the app refuses to boot if it disagrees with the code list.                                          |
+| `wallets`          | `id` (uuid), `email` (unique, nullable), `phone` (unique, nullable), `created_at`. At least one of email or phone is required.                                                                                                                  |
+| `balances`         | `wallet_id`, `currency` (FK to `currencies`), `amount NUMERIC(38,8) CHECK (amount >= 0)`, primary key (`wallet_id`, `currency`). One row per currency is created with the wallet.                                                               |
+| `transactions`     | `id`, `type` (deposit / swap / transfer), `source_wallet_id`, `destination_wallet_id`, `source_currency`, `source_amount`, `destination_currency`, `destination_amount`, `rate`, `idempotency_key`, `created_at`                                |
+| `idempotency_keys` | `key`, `request_hash`, `status`, `response_code`, `response_body`, `created_at`                                                                                                                                                                 |
+| `fx_rates`         | `currency` (primary key, FK to `currencies`), `units_per_usd NUMERIC(38,18) CHECK (> 0)`, `source` (live / fallback), `provider` (required for live rows), `provider_updated_at`, `refreshed_at`. Seeded with fallback quotes by the migration. |
 
 ## Build order (one conventional commit per step)
 

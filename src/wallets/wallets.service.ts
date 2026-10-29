@@ -78,6 +78,9 @@ export class WalletsService {
       valuation: {
         source: pairs.map((p) => p.source).reduce(worseSource, 'live'),
         ratesAsOf: new Date(Math.min(...pairs.map((p) => p.refreshedAt.getTime()))).toISOString(),
+        provider: pairs.every((p) => p.provider === pairs[0]?.provider)
+          ? (pairs[0]?.provider ?? null)
+          : null,
       },
     };
   }

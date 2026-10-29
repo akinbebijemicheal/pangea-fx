@@ -1,8 +1,43 @@
 import { plainToInstance, Transform, Type } from 'class-transformer';
-import { IsBoolean, IsIn, IsInt, IsString, Matches, Max, Min, validateSync } from 'class-validator';
+import {
+  IsBoolean,
+  IsIn,
+  IsInt,
+  IsString,
+  Matches,
+  Max,
+  Min,
+  ValidateBy,
+  validateSync,
+} from 'class-validator';
+import { validateCronExpression } from 'cron';
 
 export const NODE_ENVS = ['development', 'test', 'production'] as const;
 export type NodeEnv = (typeof NODE_ENVS)[number];
+
+/**
+ * Boolean env var with a default. Reads the raw value from `obj`: implicit
+ * conversion has already turned the string "false" into Boolean("false") ===
+ * true by the time `value` arrives.
+ */
+function EnvBoolean(defaultValue: boolean): PropertyDecorator {
+  return Transform(({ obj, key }: { obj: Record<string, unknown>; key: string }) => {
+    const raw = obj[key];
+    return raw === undefined ? defaultValue : raw === true || raw === 'true';
+  });
+}
+
+/** A cron expression, or "off" to disable the job. */
+function IsCronOrOff(): PropertyDecorator {
+  return ValidateBy({
+    name: 'isCronOrOff',
+    validator: {
+      validate: (value: unknown) =>
+        value === 'off' || (typeof value === 'string' && validateCronExpression(value).valid),
+      defaultMessage: (args) => `${args?.property} must be a cron expression or "off"`,
+    },
+  });
+}
 
 export class EnvironmentVariables {
   @IsIn(NODE_ENVS)
@@ -22,12 +57,7 @@ export class EnvironmentVariables {
   DATABASE_URL!: string;
 
   /** Run pending migrations when the API starts. */
-  // Reads the raw value from `obj`: implicit conversion has already turned the
-  // string "false" into Boolean("false") === true by the time `value` arrives.
-  @Transform(({ obj }: { obj: Record<string, unknown> }) => {
-    const raw = obj.DB_MIGRATE_ON_BOOT;
-    return raw === undefined ? true : raw === true || raw === 'true';
-  })
+  @EnvBoolean(true)
   @IsBoolean()
   DB_MIGRATE_ON_BOOT: boolean = true;
 
@@ -53,6 +83,19 @@ export class EnvironmentVariables {
   @IsInt()
   @Min(0)
   FX_RETRY_BACKOFF_SECONDS: number = 60;
+
+  /**
+   * Scheduled refresh, in UTC. The default runs at 00:10 UTC, just after
+   * open.er-api.com publishes its daily rates. "off" disables it.
+   */
+  @IsString()
+  @IsCronOrOff()
+  FX_REFRESH_CRON: string = '10 0 * * *';
+
+  /** Refresh rates in the background when the API starts. */
+  @EnvBoolean(true)
+  @IsBoolean()
+  FX_REFRESH_ON_BOOT: boolean = true;
 }
 
 /**

@@ -1,5 +1,5 @@
 import { Money } from '../../src/common/money.js';
-import type { FxRateProvider, ProviderQuotes } from '../../src/fx/fx.types.js';
+import type { FxRateProvider, ProviderInfo, ProviderQuotes } from '../../src/fx/fx.types.js';
 
 /**
  * Deterministic provider for e2e tests: no network, round numbers so expected
@@ -16,6 +16,12 @@ export const FAKE_UNITS_PER_USD: Record<string, string> = {
 
 export class FakeFxProvider implements FxRateProvider {
   readonly name = 'fake';
+  readonly info: ProviderInfo = {
+    name: 'fake',
+    url: 'https://fx.test',
+    updateFrequency: 'daily',
+    attribution: 'Rates by Fake FX',
+  };
   calls = 0;
 
   fetchUsdQuotes(fiatCodes: readonly string[]): Promise<ProviderQuotes> {

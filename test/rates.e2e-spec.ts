@@ -31,6 +31,16 @@ describe('Rates (e2e)', () => {
   const http = () => request(app.getHttpServer());
 
   describe('GET /api/v1/rates', () => {
+    it('names the rate provider with its attribution and update frequency', async () => {
+      const res = await http().get('/api/v1/rates').expect(200);
+      expect(res.body.provider).toEqual({
+        name: 'fake',
+        url: 'https://fx.test',
+        updateFrequency: 'daily',
+        attribution: 'Rates by Fake FX',
+      });
+    });
+
     it('returns all 20 pairs from live rates with refresh times', async () => {
       const res = await http().get('/api/v1/rates').expect(200);
       const rates = res.body.rates as RateBody[];
@@ -52,7 +62,15 @@ describe('Rates (e2e)', () => {
     ])('derives %s -> %s = %s', async (from, to, rate) => {
       const res = await http().get('/api/v1/rates').query({ from, to }).expect(200);
       expect(res.body.rates).toEqual([
-        { from, to, rate, source: 'live', refreshedAt: expect.any(String) },
+        {
+          from,
+          to,
+          rate,
+          source: 'live',
+          provider: 'fake',
+          providerUpdatedAt: '2026-10-29T00:00:00.000Z',
+          refreshedAt: expect.any(String),
+        },
       ]);
     });
 
@@ -116,7 +134,7 @@ describe('Rates (e2e)', () => {
           { currency: 'EURx', amount: '20.00000000', usdValue: '25.00000000' },
         ],
         totalUsd: '137.23333332',
-        valuation: { source: 'live', ratesAsOf: expect.any(String) },
+        valuation: { source: 'live', ratesAsOf: expect.any(String), provider: 'fake' },
       });
     });
 
@@ -136,7 +154,11 @@ describe('Rates (e2e) with the provider down', () => {
 
   beforeAll(async () => {
     app = await createTestApp({
-      fxProvider: { name: 'down', fetchUsdQuotes: () => Promise.reject(new Error('down')) },
+      fxProvider: {
+        name: 'down',
+        info: { name: 'down', url: 'https://fx.test', updateFrequency: 'daily', attribution: null },
+        fetchUsdQuotes: () => Promise.reject(new Error('down')),
+      },
     });
   });
 

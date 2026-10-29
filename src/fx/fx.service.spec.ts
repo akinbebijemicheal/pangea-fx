@@ -8,6 +8,12 @@ import type { FxRatesRepository } from './fx-rates.repository.js';
 import { FxService } from './fx.service.js';
 import type { FxRateProvider, FxRateRow, ProviderQuotes } from './fx.types.js';
 
+const FAKE_INFO = {
+  name: 'fake',
+  url: 'https://fx.test',
+  updateFrequency: 'daily',
+  attribution: null,
+};
 const TTL_MS = 60 * 60_000;
 const BACKOFF_MS = 60_000;
 const START = new Date('2026-10-29T10:00:00Z').getTime();
@@ -46,6 +52,7 @@ class FakeRatesRepo {
         currency,
         units_per_usd: units,
         source: 'fallback',
+        provider: null,
         provider_updated_at: null,
         refreshed_at: at,
       });
@@ -55,12 +62,18 @@ class FakeRatesRepo {
   findAll = vi.fn(() => Promise.resolve([...this.rows.values()].map((r) => ({ ...r }))));
 
   upsertLive = vi.fn(
-    (quotes: { currency: Currency; unitsPerUsd: Decimal }[], providerAt: Date, at: Date) => {
+    (
+      quotes: { currency: Currency; unitsPerUsd: Decimal }[],
+      provider: string,
+      providerAt: Date,
+      at: Date,
+    ) => {
       for (const q of quotes) {
         this.rows.set(q.currency, {
           currency: q.currency,
           units_per_usd: q.unitsPerUsd.toFixed(),
           source: 'live',
+          provider,
           provider_updated_at: providerAt,
           refreshed_at: at,
         });
@@ -98,7 +111,7 @@ describe('FxService', () => {
     service = new FxService(
       repo as unknown as FxRatesRepository,
       currencies,
-      { name: 'fake', fetchUsdQuotes },
+      { name: 'fake', info: FAKE_INFO, fetchUsdQuotes },
       { cacheTtlMs: TTL_MS, retryBackoffMs: BACKOFF_MS },
       () => new Date(now),
     );
@@ -113,6 +126,27 @@ describe('FxService', () => {
     expect(quotes.get('cNGN')?.unitsPerUsd.toFixed()).toBe('1500');
     expect(quotes.get('cNGN')?.source).toBe('live');
     expect(quotes.get('cNGN')?.refreshedAt).toEqual(new Date(START));
+  });
+
+  it('records which provider supplied the rates and when it published them', async () => {
+    fetchUsdQuotes.mockResolvedValue(providerReturning());
+    const quotes = await service.getQuotes();
+    expect(repo.upsertLive).toHaveBeenCalledWith(
+      expect.any(Array),
+      'fake',
+      new Date(START - 3_600_000),
+      new Date(START),
+    );
+    expect(quotes.get('cGHS')?.provider).toBe('fake');
+    expect(quotes.get('cGHS')?.providerUpdatedAt).toEqual(new Date(START - 3_600_000));
+    expect(service.providerInfo.name).toBe('fake');
+  });
+
+  it('reports no provider for seed fallback rates', async () => {
+    fetchUsdQuotes.mockRejectedValue(new Error('down'));
+    const quotes = await service.getQuotes();
+    expect(quotes.get('cGHS')?.provider).toBeNull();
+    expect(quotes.get('cGHS')?.providerUpdatedAt).toBeNull();
   });
 
   it('serves fresh live rates without calling the provider again', async () => {

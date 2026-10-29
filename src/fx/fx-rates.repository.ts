@@ -16,6 +16,7 @@ export class FxRatesRepository {
   /** Replaces every quote with a fresh live set in one statement. */
   async upsertLive(
     quotes: { currency: Currency; unitsPerUsd: Decimal }[],
+    provider: string,
     providerUpdatedAt: Date,
     refreshedAt: Date,
   ): Promise<void> {
@@ -25,6 +26,7 @@ export class FxRatesRepository {
           currency: q.currency,
           units_per_usd: q.unitsPerUsd.toFixed(),
           source: 'live',
+          provider,
           provider_updated_at: providerUpdatedAt,
           refreshed_at: refreshedAt,
         })),

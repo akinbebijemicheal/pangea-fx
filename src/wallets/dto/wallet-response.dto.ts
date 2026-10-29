@@ -47,6 +47,14 @@ export class ValuationDto {
 
   @ApiProperty({ format: 'date-time', description: 'Oldest refresh time of the rates used' })
   ratesAsOf!: string;
+
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    example: 'open.er-api.com',
+    description: 'Provider of the rates used; null if any were fixed fallback rates',
+  })
+  provider!: string | null;
 }
 
 export class WalletBalancesDto {

@@ -60,6 +60,32 @@ describe('Migrations: upgrading a database that already has data', () => {
   });
 });
 
+describe('Migrations: fx_rates provider backfill', () => {
+  const getDb = useScratchDatabase();
+
+  it('attributes existing live rows to open.er-api.com and leaves fallback rows empty', async () => {
+    const db = getDb();
+    await db.migrate.up({ name: '20261029100000_create_wallets_and_balances' });
+    await db.migrate.up({ name: '20261029110000_create_currencies' });
+    await db.migrate.up({ name: '20261029120000_create_fx_rates' });
+    await db('fx_rates').where({ currency: 'USDx' }).update({ source: 'live' });
+
+    await db.migrate.up({ name: '20261029130000_add_fx_rate_provider' });
+
+    const rows = await db('fx_rates').orderBy('currency').select('currency', 'source', 'provider');
+    expect(rows.find((r) => r.currency === 'USDx')).toMatchObject({
+      source: 'live',
+      provider: 'open.er-api.com',
+    });
+    expect(rows.filter((r) => r.source === 'fallback').every((r) => r.provider === null)).toBe(
+      true,
+    );
+    await expect(
+      db('fx_rates').where({ currency: 'cNGN' }).update({ source: 'live' }),
+    ).rejects.toMatchObject({ code: '23514', constraint: 'fx_rates_live_has_provider' });
+  });
+});
+
 describe('Migrations (e2e)', () => {
   const getDb = useScratchDatabase();
   let db: Knex;

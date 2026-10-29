@@ -17,8 +17,17 @@ export function derivePair(quotes: QuoteSet, from: Currency, to: Currency): Pair
     to,
     rate: from === to ? new Money(1) : roundRate(b.unitsPerUsd.div(a.unitsPerUsd)),
     source: worseSource(a.source, b.source),
-    refreshedAt: a.refreshedAt < b.refreshedAt ? a.refreshedAt : b.refreshedAt,
+    provider: a.provider !== null && a.provider === b.provider ? a.provider : null,
+    providerUpdatedAt:
+      a.providerUpdatedAt && b.providerUpdatedAt
+        ? older(a.providerUpdatedAt, b.providerUpdatedAt)
+        : null,
+    refreshedAt: older(a.refreshedAt, b.refreshedAt),
   };
+}
+
+function older(a: Date, b: Date): Date {
+  return a < b ? a : b;
 }
 
 /** Every ordered pair of distinct supported currencies (20 for 5 currencies). */

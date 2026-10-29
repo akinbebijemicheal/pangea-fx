@@ -13,6 +13,7 @@ import {
   type FxRateProvider,
   type FxRateRow,
   type PairRate,
+  type ProviderInfo,
   type UsdQuote,
 } from './fx.types.js';
 
@@ -56,6 +57,11 @@ export class FxService {
     return derivePair(await this.getQuotes(), from, to);
   }
 
+  /** The configured provider, for attribution in API responses. */
+  get providerInfo(): ProviderInfo {
+    return this.provider.info;
+  }
+
   async listRates(): Promise<PairRate[]> {
     return allPairs(await this.getQuotes());
   }
@@ -77,7 +83,12 @@ export class FxService {
         if (!unitsPerUsd) throw new Error(`provider returned no rate for ${c.fiatCode}`);
         return { currency: c.code, unitsPerUsd };
       });
-      await this.rates.upsertLive(quotes, fetched.providerUpdatedAt, this.clock());
+      await this.rates.upsertLive(
+        quotes,
+        this.provider.name,
+        fetched.providerUpdatedAt,
+        this.clock(),
+      );
       this.nextAttemptAt = 0;
       this.logger.log(`Refreshed FX rates from ${this.provider.name}`);
     } catch (err) {
@@ -110,6 +121,8 @@ export class FxService {
         currency,
         unitsPerUsd: new Money(row.units_per_usd),
         source: row.source === 'fallback' ? 'fallback' : this.isFreshLive(row) ? 'live' : 'cache',
+        provider: row.provider,
+        providerUpdatedAt: row.provider_updated_at,
         refreshedAt: row.refreshed_at,
       });
     }

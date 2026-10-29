@@ -1,5 +1,5 @@
 import { Money } from '../common/money.js';
-import type { FxRateProvider, ProviderQuotes } from './fx.types.js';
+import type { FxRateProvider, ProviderInfo, ProviderQuotes } from './fx.types.js';
 
 interface OpenErApiResponse {
   result?: unknown;
@@ -15,6 +15,14 @@ interface OpenErApiResponse {
  */
 export class OpenErApiProvider implements FxRateProvider {
   readonly name = 'open.er-api.com';
+  readonly info: ProviderInfo = {
+    name: this.name,
+    url: 'https://www.exchangerate-api.com',
+    // Free tier publishes once a day, shortly after 00:00 UTC.
+    updateFrequency: 'daily',
+    // Required by the free tier's terms of use.
+    attribution: 'Rates By Exchange Rate API',
+  };
 
   constructor(
     private readonly url: string,

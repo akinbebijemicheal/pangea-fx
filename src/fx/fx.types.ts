@@ -20,6 +20,8 @@ export interface FxRateRow {
   currency: Currency;
   units_per_usd: string;
   source: 'live' | 'fallback';
+  /** Provider name for live rows; null for seed fallback rows. */
+  provider: string | null;
   provider_updated_at: Date | null;
   refreshed_at: Date;
 }
@@ -29,6 +31,8 @@ export interface UsdQuote {
   currency: Currency;
   unitsPerUsd: Decimal;
   source: RateSource;
+  provider: string | null;
+  providerUpdatedAt: Date | null;
   refreshedAt: Date;
 }
 
@@ -38,6 +42,10 @@ export interface PairRate {
   to: Currency;
   rate: Decimal;
   source: RateSource;
+  /** Provider of both legs, or null if either leg is a fallback rate. */
+  provider: string | null;
+  /** Older of the two legs' provider publish times; null if either is a fallback. */
+  providerUpdatedAt: Date | null;
   refreshedAt: Date;
 }
 
@@ -47,8 +55,19 @@ export interface ProviderQuotes {
   providerUpdatedAt: Date;
 }
 
+/** Who supplies the rates, shown to API clients alongside every rate. */
+export interface ProviderInfo {
+  name: string;
+  url: string;
+  /** How often the provider publishes new rates. */
+  updateFrequency: string;
+  /** Credit the provider's terms ask for, if any. */
+  attribution: string | null;
+}
+
 export interface FxRateProvider {
   readonly name: string;
+  readonly info: ProviderInfo;
   fetchUsdQuotes(fiatCodes: readonly string[]): Promise<ProviderQuotes>;
 }
 

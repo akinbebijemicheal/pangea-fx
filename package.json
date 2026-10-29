@@ -15,6 +15,7 @@
     "start:dev": "concurrently -k -n tsc,api \"tsc -p tsconfig.build.json --watch --preserveWatchOutput\" \"node --watch-path=dist --env-file-if-exists=.env dist/main.js\"",
     "migrate": "node --env-file-if-exists=.env dist/database/migrate.js",
     "migrate:rollback": "node --env-file-if-exists=.env dist/database/migrate.js rollback",
+    "reconcile": "node --env-file-if-exists=.env dist/ledger/reconcile.js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",

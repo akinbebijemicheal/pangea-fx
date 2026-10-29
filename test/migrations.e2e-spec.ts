@@ -40,7 +40,7 @@ describe('Migrations: upgrading a database that already has data', () => {
     const [wallet] = await db('wallets').insert({ email: 'old@example.com' }).returning('id');
     await db('balances').insert({ wallet_id: wallet.id, currency: 'cGHS', amount: '12.5' });
 
-    await db.migrate.latest();
+    await db.migrate.up({ name: '20261029110000_create_currencies' });
 
     expect(await db('balances').where({ wallet_id: wallet.id })).toMatchObject([
       { currency: 'cGHS', amount: '12.50000000' },
@@ -52,7 +52,7 @@ describe('Migrations: upgrading a database that already has data', () => {
 
   it('restores the CHECK constraint when the currencies migration is rolled back', async () => {
     const db = getDb();
-    await db.migrate.down();
+    await db.migrate.down({ name: '20261029110000_create_currencies' });
     const [wallet] = await db('wallets').insert({ email: 'down@example.com' }).returning('id');
     await expect(
       db('balances').insert({ wallet_id: wallet.id, currency: 'BTC' }),

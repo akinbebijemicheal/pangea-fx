@@ -4,7 +4,11 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { convert, Money, toAmountString } from '../common/money.js';
 import { isUniqueViolation } from '../database/pg-errors.js';
+import { derivePair } from '../fx/fx-math.js';
+import { FxService } from '../fx/fx.service.js';
+import { worseSource } from '../fx/fx.types.js';
 import type { CreateWalletDto } from './dto/create-wallet.dto.js';
 import { LOOKUP_ONE_OF_MESSAGE, type LookupWalletQueryDto } from './dto/lookup-wallet.dto.js';
 import type { BalanceDto, WalletBalancesDto, WalletDto } from './dto/wallet-response.dto.js';
@@ -13,7 +17,10 @@ import { WalletsRepository } from './wallets.repository.js';
 
 @Injectable()
 export class WalletsService {
-  constructor(private readonly wallets: WalletsRepository) {}
+  constructor(
+    private readonly wallets: WalletsRepository,
+    private readonly fx: FxService,
+  ) {}
 
   async create(dto: CreateWalletDto): Promise<WalletDto> {
     let wallet: WalletRow;
@@ -49,9 +56,30 @@ export class WalletsService {
     return this.toWalletDto(wallet, await this.wallets.findBalances(wallet.id));
   }
 
+  /**
+   * Balances with a USD value per line and in total. Each line is converted at
+   * the current currency -> USDx rate and rounded down; the total is the sum of
+   * the rounded lines so the response always adds up.
+   */
   async getBalances(id: string): Promise<WalletBalancesDto> {
     await this.requireWallet(id);
-    return { walletId: id, balances: this.toBalanceDtos(await this.wallets.findBalances(id)) };
+    const [rows, quotes] = await Promise.all([this.wallets.findBalances(id), this.fx.getQuotes()]);
+    let total = new Money(0);
+    const pairs = rows.map((r) => derivePair(quotes, r.currency, 'USDx'));
+    const balances = rows.map((r, i) => {
+      const usd = convert(new Money(r.amount), pairs[i]!.rate);
+      total = total.plus(usd);
+      return { currency: r.currency, amount: r.amount, usdValue: toAmountString(usd) };
+    });
+    return {
+      walletId: id,
+      balances,
+      totalUsd: toAmountString(total),
+      valuation: {
+        source: pairs.map((p) => p.source).reduce(worseSource, 'live'),
+        ratesAsOf: new Date(Math.min(...pairs.map((p) => p.refreshedAt.getTime()))).toISOString(),
+      },
+    };
   }
 
   private async requireWallet(id: string): Promise<WalletRow> {

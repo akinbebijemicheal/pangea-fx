@@ -30,6 +30,29 @@ export class EnvironmentVariables {
   })
   @IsBoolean()
   DB_MIGRATE_ON_BOOT: boolean = true;
+
+  /** USD-based rates endpoint; must return the open.er-api.com v6 shape. */
+  @IsString()
+  @Matches(/^https?:\/\//, { message: 'FX_PROVIDER_URL must be an http(s) URL' })
+  FX_PROVIDER_URL: string = 'https://open.er-api.com/v6/latest/USD';
+
+  /** Live rates younger than this are served without calling the provider. */
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  FX_CACHE_TTL_SECONDS: number = 3600;
+
+  /** Provider request timeout. */
+  @Type(() => Number)
+  @IsInt()
+  @Min(100)
+  FX_TIMEOUT_MS: number = 3000;
+
+  /** After a failed refresh, wait this long before calling the provider again. */
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  FX_RETRY_BACKOFF_SECONDS: number = 60;
 }
 
 /**

@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { CURRENCIES, type Currency } from '../../common/currency.js';
+import type { RateSource } from '../../fx/fx.types.js';
 
 export class BalanceDto {
   @ApiProperty({ enum: CURRENCIES, example: 'cNGN' })
@@ -29,10 +30,38 @@ export class WalletDto {
   balances!: BalanceDto[];
 }
 
+export class ValuedBalanceDto extends BalanceDto {
+  @ApiProperty({
+    example: '96.77419354',
+    description: 'USD equivalent at the current rate, rounded down to 8 dp',
+  })
+  usdValue!: string;
+}
+
+export class ValuationDto {
+  @ApiProperty({
+    enum: ['live', 'cache', 'fallback'],
+    description: 'Weakest rate source used across the balances',
+  })
+  source!: RateSource;
+
+  @ApiProperty({ format: 'date-time', description: 'Oldest refresh time of the rates used' })
+  ratesAsOf!: string;
+}
+
 export class WalletBalancesDto {
   @ApiProperty({ format: 'uuid' })
   walletId!: string;
 
-  @ApiProperty({ type: [BalanceDto] })
-  balances!: BalanceDto[];
+  @ApiProperty({ type: [ValuedBalanceDto] })
+  balances!: ValuedBalanceDto[];
+
+  @ApiProperty({
+    example: '1096.77419354',
+    description: 'Sum of the per-currency USD values, so the lines always add up to the total',
+  })
+  totalUsd!: string;
+
+  @ApiProperty({ type: ValuationDto })
+  valuation!: ValuationDto;
 }

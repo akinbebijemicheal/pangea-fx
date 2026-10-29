@@ -176,7 +176,11 @@ describe('Wallets (e2e)', () => {
     it('returns every currency in a stable order', async () => {
       const created = await http().post('/api/v1/wallets').send({ email: uniqueEmail() });
       const res = await http().get(`/api/v1/wallets/${created.body.id}/balances`).expect(200);
-      expect(res.body).toEqual({ walletId: created.body.id, balances: ZERO_BALANCES });
+      expect(res.body).toMatchObject({
+        walletId: created.body.id,
+        balances: ZERO_BALANCES.map((b) => ({ ...b, usdValue: '0.00000000' })),
+        totalUsd: '0.00000000',
+      });
     });
 
     it('returns 404 for an unknown wallet', async () => {
@@ -217,7 +221,7 @@ describe('Wallets (e2e)', () => {
         .where({ wallet_id: id, currency: 'cNGN' })
         .update({ amount: '123456789012345678901234567890.12345678' });
       const res = await http().get(`/api/v1/wallets/${id}/balances`).expect(200);
-      expect(res.body.balances[0]).toEqual({
+      expect(res.body.balances[0]).toMatchObject({
         currency: 'cNGN',
         amount: '123456789012345678901234567890.12345678',
       });

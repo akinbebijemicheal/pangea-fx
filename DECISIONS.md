@@ -32,11 +32,13 @@ This file records the main technical decisions and the reasons for them. The REA
 
 - An `Idempotency-Key` header is **required** on deposits, swaps and transfers (400 if missing or malformed).
 - The key is claimed and the money movement is committed in **one database transaction**. The first request inserts the key (its primary key is the lock), runs the handler in a savepoint and stores the response before committing.
-- A duplicate that arrives while the original is in flight blocks on that insert until the original commits, then replays its response. If it waits longer than 5s it gets **409**.
+- A duplicate that arrives while the original is in flight blocks on that insert until the original commits, then replays its response. If it waits longer than `IDEMPOTENCY_LOCK_TIMEOUT_MS` (default 5s) it gets **409**.
 - A completed key replays the stored status and body with `Idempotent-Replayed: true`. The handler does not run again.
 - Reusing a key for a different method, path or body (hashed as canonical JSON) returns **422**.
-- A 4xx from the handler rolls back its writes to the savepoint and is stored, so a retry gets the same answer. A 5xx or crash rolls back everything including the key, so the client can safely retry.
-- Because key and movement commit together, there is no "processing" state a crash could leave stuck, and no movement without its key (`transactions.idempotency_key` is a unique foreign key).
+- A **400** (malformed request, failed validation) is not stored: nothing ran, so the key stays free for the corrected request. This matches Stripe.
+- Any other 4xx (404, 422 such as insufficient funds) rolls back the handler's writes to the savepoint and is stored, so a retry gets the same answer. A 5xx or crash rolls back everything including the key, so the client can safely retry.
+- Because key and movement commit together, there is no "processing" state a crash could leave stuck.
+- Keys are honoured for at least `IDEMPOTENCY_KEY_TTL_HOURS` (default 24h, like Stripe), then deleted by an hourly job (`IDEMPOTENCY_CLEANUP_CRON`). After that the same key counts as a new request. Each transaction keeps its key for audit, without a foreign key, so cleanup never touches the ledger.
 
 ### Concurrency
 
@@ -57,14 +59,52 @@ This file records the main technical decisions and the reasons for them. The REA
 
 ## Data model (initial)
 
-| Table              | Key columns                                                                                                                                                                                                                                                                                                                                                                                            |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `currencies`       | `code` (primary key, e.g. cNGN), `name`, `fiat_code` (ISO 4217 peg, used for FX), `sort_order`. Source of truth for supported stablecoins; the app refuses to boot if it disagrees with the code list.                                                                                                                                                                                                 |
-| `wallets`          | `id` (uuid), `email` (unique, nullable), `phone` (unique, nullable), `created_at`. At least one of email or phone is required.                                                                                                                                                                                                                                                                         |
-| `balances`         | `wallet_id`, `currency` (FK to `currencies`), `amount NUMERIC(38,8) CHECK (amount >= 0)`, primary key (`wallet_id`, `currency`). One row per currency is created with the wallet.                                                                                                                                                                                                                      |
-| `transactions`     | `id`, `type` (deposit / swap / transfer), `source_wallet_id` (null for deposits), `destination_wallet_id`, `source_currency`, `source_amount`, `destination_currency`, `destination_amount`, `rate NUMERIC(38,18)`, `rate_source`, `rate_provider`, `rate_refreshed_at`, `idempotency_key` (unique FK), `created_at`. A CHECK enforces the shape of each type. Indexed by wallet and time for history. |
-| `idempotency_keys` | `key` (primary key), `request_hash` (sha256), `response_status`, `response_body` (jsonb), `created_at`                                                                                                                                                                                                                                                                                                 |
-| `fx_rates`         | `currency` (primary key, FK to `currencies`), `units_per_usd NUMERIC(38,18) CHECK (> 0)`, `source` (live / fallback), `provider` (required for live rows), `provider_updated_at`, `refreshed_at`. Seeded with fallback quotes by the migration.                                                                                                                                                        |
+| Table              | Key columns                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `currencies`       | `code` (primary key, e.g. cNGN), `name`, `fiat_code` (ISO 4217 peg, used for FX), `sort_order`. Source of truth for supported stablecoins; the app refuses to boot if it disagrees with the code list.                                                                                                                                                                                                               |
+| `wallets`          | `id` (uuid), `email` (unique, nullable), `phone` (unique, nullable), `created_at`. At least one of email or phone is required.                                                                                                                                                                                                                                                                                       |
+| `balances`         | `wallet_id`, `currency` (FK to `currencies`), `amount NUMERIC(38,8) CHECK (amount >= 0)`, primary key (`wallet_id`, `currency`). One row per currency is created with the wallet.                                                                                                                                                                                                                                    |
+| `transactions`     | `id`, `type` (deposit / swap / transfer), `source_wallet_id` (null for deposits), `destination_wallet_id`, `source_currency`, `source_amount`, `destination_currency`, `destination_amount`, `rate NUMERIC(38,18)`, `rate_source`, `rate_provider`, `rate_refreshed_at`, `idempotency_key` (indexed, kept for audit), `created_at`. A CHECK enforces the shape of each type. Indexed by wallet and time for history. |
+| `idempotency_keys` | `key` (primary key), `request_hash` (sha256), `response_status`, `response_body` (jsonb), `created_at`                                                                                                                                                                                                                                                                                                               |
+| `fx_rates`         | `currency` (primary key, FK to `currencies`), `units_per_usd NUMERIC(38,18) CHECK (> 0)`, `source` (live / fallback), `provider` (required for live rows), `provider_updated_at`, `refreshed_at`. Seeded with fallback quotes by the migration.                                                                                                                                                                      |
+
+## Decisions for the remaining steps
+
+- **Money operations do not call the FX provider.** Swaps and transfers read the stored quotes only, inside their transaction, so a slow or failing provider can never hold locks or delay a payment. The daily cron, the boot refresh and lazy refreshes on `/rates` and balance reads keep those quotes current. The applied rate's `source`, `provider` and refresh time are recorded on the transaction.
+- **Debits lock before they check.** A swap or transfer locks every balance row it touches with one `SELECT … FOR UPDATE … ORDER BY wallet_id, currency`, checks funds, then writes. The fixed order means two transfers in opposite directions cannot deadlock. Insufficient funds is a **422**.
+- **Amounts are in the source currency.** A swap or transfer request says how much leaves the source balance; the credited amount is `amount × rate`, rounded down to 8 dp.
+- **One row per movement.** A transfer is one `transactions` row visible to both wallets; history adds a `direction` (`in` / `out` / `self`) relative to the wallet being viewed.
+- **History uses keyset pagination** on `(created_at, id)`, newest first, matching the existing indexes. It is stable while new transactions arrive, unlike offset pagination. Filters: `type` and `currency` (matches either side of the movement).
+- **The committed OpenAPI file is checked by a test**, which fails if `openapi.json` no longer matches what the code generates.
+
+## Brief coverage
+
+| Requirement (from the brief)                                                          | Status                                                                               |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Node.js LTS + TypeScript strict                                                       | Done. Node 22.22+ or 24 (Docker uses 24), `strict` plus extra checks.                |
+| Express or NestJS                                                                     | Done. NestJS 12.                                                                     |
+| SQL or MongoDB, justified                                                             | Done. PostgreSQL 16; reasoning above, README to repeat it.                           |
+| Cache/queue only where it earns its place                                             | Done. None used; cron jobs run in-process.                                           |
+| Jest/Vitest + Supertest                                                               | Done. Vitest + Supertest against real Postgres.                                      |
+| Yarn, ESLint, Prettier                                                                | Done, plus a pre-commit hook.                                                        |
+| `docker compose up` starts API and dependencies; migrations automatic or one command  | Done. Migrations and seed rates run on boot; `yarn migrate` also exists.             |
+| Create wallet by email or mobile; no duplicates                                       | Done. Normalised, unique in the DB, race-safe.                                       |
+| A balance per supported stablecoin                                                    | Done. Currencies table, one balance row each.                                        |
+| All balances plus total in USD                                                        | Done. `GET /wallets/:id/balances`.                                                   |
+| Deposit: balance updates immediately, transaction recorded                            | Done. Idempotent.                                                                    |
+| Swap within a wallet using FX rates                                                   | Step 5.                                                                              |
+| Live FX preferred, fallback when the provider fails                                   | Done. Live, cache, fallback; daily cron.                                             |
+| Reject swaps that would go negative; never process the same request twice             | Idempotency done (step 4). Funds check in step 5.                                    |
+| Transfer between wallets, same or different currency, auto-convert                    | Step 6.                                                                              |
+| Record sender, receiver, both amounts and currencies, rate, timestamp                 | Schema done (step 4); filled by steps 5 and 6.                                       |
+| List a wallet's transactions newest first, paginated, filter by type and currency     | Step 7.                                                                              |
+| Fetch a transaction by id                                                             | Step 7.                                                                              |
+| Current rates between all stablecoins with refresh time                               | Done. `GET /rates`.                                                                  |
+| Conventional commit history                                                           | Done.                                                                                |
+| `yarn test` runs the full suite and passes                                            | Done. Needs Docker (or `TEST_DATABASE_URL`); a clear error explains this if missing. |
+| OpenAPI spec committed                                                                | Served at `/docs` now; committed file in step 9.                                     |
+| README: name, stack, DB choice, setup, tests, walkthrough, data model, money handling | Step 9. This file is the source.                                                     |
+| Assumptions, known limitations, what's next                                           | Step 9.                                                                              |
 
 ## Build order (one conventional commit per step)
 
@@ -75,5 +115,5 @@ This file records the main technical decisions and the reasons for them. The REA
 5. `feat:` swaps
 6. `feat:` transfers
 7. `feat:` transaction history (pagination, type and currency filters) and fetch by id
-8. `test:` concurrency and idempotency suites
+8. `test:` ledger reconciliation (every balance equals the sum of its transactions) and cross-cutting checks
 9. `docs:` export the Swagger spec and write the full README

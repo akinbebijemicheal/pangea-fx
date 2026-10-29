@@ -188,6 +188,15 @@ describe('Deposits (e2e)', () => {
       expect(await transactionCount(id)).toBe(0);
     });
 
+    it('does not use up the key on a validation error', async () => {
+      const id = await newWallet();
+      const key = randomUUID();
+      await deposit(id, { currency: 'USDx', amount: 10 }, key).expect(400);
+      const fixed = await deposit(id, { currency: 'USDx', amount: '10' }, key).expect(201);
+      expect(fixed.headers['idempotent-replayed']).toBeUndefined();
+      expect(await balance(id, 'USDx')).toBe('10.00000000');
+    });
+
     it('returns 404 for an unknown wallet', async () => {
       const res = await deposit(randomUUID(), { currency: 'USDx', amount: '1' }).expect(404);
       expect(res.body.message).toMatch(/not found/);

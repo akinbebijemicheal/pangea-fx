@@ -67,3 +67,21 @@ describe('validateEnv FX refresh settings', () => {
     );
   });
 });
+
+describe('validateEnv idempotency settings', () => {
+  it('defaults to a 24h TTL, hourly cleanup and a 5s duplicate wait', () => {
+    const env = validateEnv({ DATABASE_URL });
+    expect(env.IDEMPOTENCY_KEY_TTL_HOURS).toBe(24);
+    expect(env.IDEMPOTENCY_CLEANUP_CRON).toBe('15 * * * *');
+    expect(env.IDEMPOTENCY_LOCK_TIMEOUT_MS).toBe(5000);
+  });
+
+  it.each([
+    ['IDEMPOTENCY_KEY_TTL_HOURS', '0'],
+    ['IDEMPOTENCY_CLEANUP_CRON', 'hourly'],
+    ['IDEMPOTENCY_LOCK_TIMEOUT_MS', '50'],
+    ['IDEMPOTENCY_LOCK_TIMEOUT_MS', '60001'],
+  ])('rejects %s=%s', (key, value) => {
+    expect(() => validateEnv({ DATABASE_URL, [key]: value })).toThrow(new RegExp(key));
+  });
+});

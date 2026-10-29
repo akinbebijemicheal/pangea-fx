@@ -7,6 +7,7 @@ import { DatabaseModule } from './database/database.module.js';
 import { DepositsModule } from './deposits/deposits.module.js';
 import { FxModule } from './fx/fx.module.js';
 import { HealthModule } from './health/health.module.js';
+import { IdempotencyModule } from './idempotency/idempotency.module.js';
 import { WalletsModule } from './wallets/wallets.module.js';
 
 @Module({
@@ -19,6 +20,7 @@ import { WalletsModule } from './wallets/wallets.module.js';
     FxModule,
     WalletsModule,
     DepositsModule,
+    IdempotencyModule,
   ],
 })
 export class AppModule {}

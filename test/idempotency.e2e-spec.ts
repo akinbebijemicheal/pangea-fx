@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Server } from 'node:http';
 import {
+  BadRequestException,
   Body,
   Controller,
   type INestApplication,
@@ -9,6 +10,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
 import { Test } from '@nestjs/testing';
 import type { Knex } from 'knex';
 import request from 'supertest';
@@ -17,14 +19,23 @@ import { validateEnv } from '../src/config/env.validation.js';
 import { KNEX } from '../src/database/database.constants.js';
 import { DatabaseModule } from '../src/database/database.module.js';
 import { TransactionManager } from '../src/database/transaction-manager.js';
+import { IdempotencyCleanupScheduler } from '../src/idempotency/idempotency-cleanup.scheduler.js';
+import { IdempotencyModule } from '../src/idempotency/idempotency.module.js';
 import { Idempotent } from '../src/idempotency/idempotent.decorator.js';
+import { uniqueEmail } from './support/fixtures.js';
+
+// Short duplicate wait so the 409 path is testable quickly. This file runs in
+// its own worker, so the override does not leak into other test files.
+const LOCK_TIMEOUT_MS = 300;
+process.env.IDEMPOTENCY_LOCK_TIMEOUT_MS = String(LOCK_TIMEOUT_MS);
 
 const PROBE_TABLE = 'idempotency_probe';
 
 interface ProbeBody {
   /** What the handler should do after writing its probe row. */
-  mode: 'ok' | 'client-error' | 'server-error' | 'slow';
+  mode: 'ok' | 'bad-request' | 'client-error' | 'server-error';
   tag: string;
+  delayMs?: number;
 }
 
 /** Counts attempts per tag in memory, so tests can tell whether the handler re-ran. */
@@ -45,11 +56,12 @@ class ProbeController {
     const attempt = (attempts.get(body.tag) ?? 0) + 1;
     attempts.set(body.tag, attempt);
     await this.tm.db(PROBE_TABLE).insert({ tag: body.tag });
+    if (body.delayMs) await new Promise((r) => setTimeout(r, body.delayMs));
+    if (body.mode === 'bad-request') throw new BadRequestException('malformed');
     if (body.mode === 'client-error') throw new UnprocessableEntityException('nope');
     if (body.mode === 'server-error' && attempt === 1) {
       throw new InternalServerErrorException('boom');
     }
-    if (body.mode === 'slow') await new Promise((r) => setTimeout(r, 400));
     return { tag: body.tag, attempt };
   }
 }
@@ -60,7 +72,12 @@ describe('Idempotency interceptor (e2e)', () => {
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
-      imports: [ConfigModule.forRoot({ isGlobal: true, validate: validateEnv }), DatabaseModule],
+      imports: [
+        ConfigModule.forRoot({ isGlobal: true, validate: validateEnv }),
+        ScheduleModule.forRoot(),
+        DatabaseModule,
+        IdempotencyModule,
+      ],
       controllers: [ProbeController],
     }).compile();
     app = moduleRef.createNestApplication<INestApplication<Server>>({ logger: false });
@@ -92,7 +109,19 @@ describe('Idempotency interceptor (e2e)', () => {
     expect(attempts.get(tag)).toBe(1);
   });
 
-  it('rolls back the handler writes on a 4xx but keeps the key with the stored error', async () => {
+  it('does not store a 400: the key stays free for the corrected request', async () => {
+    const tag = randomUUID();
+    const key = randomUUID();
+    await call({ mode: 'bad-request', tag }, key).expect(400);
+    expect(await keyExists(key)).toBe(false);
+    expect(await probeRows(tag)).toBe(0);
+
+    const corrected = await call({ mode: 'ok', tag }, key).expect(200);
+    expect(corrected.headers['idempotent-replayed']).toBeUndefined();
+    expect(await probeRows(tag)).toBe(1);
+  });
+
+  it('rolls back the handler writes on another 4xx but keeps the key with the stored error', async () => {
     const tag = randomUUID();
     const key = randomUUID();
     await call({ mode: 'client-error', tag }, key).expect(422);
@@ -120,15 +149,80 @@ describe('Idempotency interceptor (e2e)', () => {
   it('makes a duplicate wait for the in-flight original, then replays it', async () => {
     const tag = randomUUID();
     const key = randomUUID();
-    const original = call({ mode: 'slow', tag }, key);
-    await new Promise((r) => setTimeout(r, 100));
-    const duplicate = call({ mode: 'slow', tag }, key);
-    const [a, b] = await Promise.all([original, duplicate]);
+    const body: ProbeBody = { mode: 'ok', tag, delayMs: LOCK_TIMEOUT_MS / 3 };
+    const original = call(body, key);
+    await new Promise((r) => setTimeout(r, 30));
+    const [a, b] = await Promise.all([original, call(body, key)]);
 
     expect([a.status, b.status]).toEqual([200, 200]);
     expect(b.body).toEqual(a.body);
-    expect(b.headers['idempotent-replayed']).toBe('true');
+    expect([a, b].filter((r) => r.headers['idempotent-replayed'] === 'true')).toHaveLength(1);
     expect(attempts.get(tag)).toBe(1);
     expect(await probeRows(tag)).toBe(1);
+  });
+
+  it('answers 409 when the original is still running after the lock timeout', async () => {
+    const tag = randomUUID();
+    const key = randomUUID();
+    const body: ProbeBody = { mode: 'ok', tag, delayMs: LOCK_TIMEOUT_MS * 4 };
+    // Whichever request claims the key first runs; the other gives up after the timeout.
+    const results = await Promise.all([call(body, key), call(body, key)]);
+    expect(results.map((r) => r.status).sort()).toEqual([200, 409]);
+    const conflict = results.find((r) => r.status === 409)!;
+    expect(conflict.body.message).toMatch(/still being processed/);
+    expect(attempts.get(tag)).toBe(1);
+  });
+
+  describe('expiry', () => {
+    it('deletes only keys older than the TTL and keeps their transactions', async () => {
+      const oldKey = `old-${randomUUID()}`;
+      const freshKey = `fresh-${randomUUID()}`;
+      await db('idempotency_keys').insert([
+        {
+          key: oldKey,
+          request_hash: 'a'.repeat(64),
+          response_status: 201,
+          response_body: '{}',
+          created_at: db.raw("now() - interval '25 hours'"),
+        },
+        { key: freshKey, request_hash: 'b'.repeat(64), response_status: 201, response_body: '{}' },
+      ]);
+      const [wallet] = await db('wallets').insert({ email: uniqueEmail() }).returning('id');
+      const [tx] = await db('transactions')
+        .insert({
+          type: 'deposit',
+          destination_wallet_id: wallet.id,
+          source_currency: 'USDx',
+          source_amount: '1',
+          destination_currency: 'USDx',
+          destination_amount: '1',
+          rate: '1',
+          idempotency_key: oldKey,
+        })
+        .returning('id');
+
+      const deleted = await app.get(IdempotencyCleanupScheduler).deleteExpired();
+
+      expect(deleted).toBeGreaterThanOrEqual(1);
+      expect(await keyExists(oldKey)).toBe(false);
+      expect(await keyExists(freshKey)).toBe(true);
+      expect(await db('transactions').where({ id: tx.id }).first()).toMatchObject({
+        idempotency_key: oldKey,
+      });
+    });
+
+    it('treats an expired key as new', async () => {
+      const tag = randomUUID();
+      const key = randomUUID();
+      await call({ mode: 'ok', tag }, key).expect(200);
+      await db('idempotency_keys')
+        .where({ key })
+        .update({ created_at: db.raw("now() - interval '25 hours'") });
+      await app.get(IdempotencyCleanupScheduler).deleteExpired();
+
+      const again = await call({ mode: 'ok', tag }, key).expect(200);
+      expect(again.headers['idempotent-replayed']).toBeUndefined();
+      expect(again.body).toEqual({ tag, attempt: 2 });
+    });
   });
 });

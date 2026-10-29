@@ -22,11 +22,20 @@ let container: StartedPostgreSqlContainer | undefined;
 export async function setup(project: TestProject): Promise<void> {
   let databaseUrl = process.env.TEST_DATABASE_URL;
   if (!databaseUrl) {
-    container = await new PostgreSqlContainer('postgres:16-alpine')
-      .withDatabase('pangea_fx_test')
-      .withUsername('pangea')
-      .withPassword('pangea')
-      .start();
+    try {
+      container = await new PostgreSqlContainer('postgres:16-alpine')
+        .withDatabase('pangea_fx_test')
+        .withUsername('pangea')
+        .withPassword('pangea')
+        .start();
+    } catch (err) {
+      throw new Error(
+        'The e2e tests need a Postgres database. Start Docker so they can run a throwaway ' +
+          'container, or set TEST_DATABASE_URL to an empty Postgres 16 database. ' +
+          `Unit tests alone run with \`yarn test:unit\`. Cause: ${String(err)}`,
+        { cause: err },
+      );
+    }
     databaseUrl = container.getConnectionUri();
   }
 

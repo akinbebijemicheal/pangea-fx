@@ -96,6 +96,24 @@ export class EnvironmentVariables {
   @EnvBoolean(true)
   @IsBoolean()
   FX_REFRESH_ON_BOOT: boolean = true;
+
+  /** Idempotency keys are honoured for at least this long, then deleted. */
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  IDEMPOTENCY_KEY_TTL_HOURS: number = 24;
+
+  /** When expired idempotency keys are deleted (cron, UTC), or "off". */
+  @IsString()
+  @IsCronOrOff()
+  IDEMPOTENCY_CLEANUP_CRON: string = '15 * * * *';
+
+  /** How long a duplicate request waits for the in-flight original before a 409. */
+  @Type(() => Number)
+  @IsInt()
+  @Min(100)
+  @Max(60_000)
+  IDEMPOTENCY_LOCK_TIMEOUT_MS: number = 5000;
 }
 
 /**

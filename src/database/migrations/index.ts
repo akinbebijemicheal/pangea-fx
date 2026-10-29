@@ -4,6 +4,7 @@ import * as createCurrencies from './20261029110000_create_currencies.js';
 import * as createFxRates from './20261029120000_create_fx_rates.js';
 import * as addFxRateProvider from './20261029130000_add_fx_rate_provider.js';
 import * as createTransactionsAndIdempotencyKeys from './20261029140000_create_transactions_and_idempotency_keys.js';
+import * as decoupleTransactionIdempotencyKey from './20261029150000_decouple_transaction_idempotency_key.js';
 
 interface NamedMigration {
   name: string;
@@ -23,6 +24,10 @@ export const MIGRATIONS: readonly NamedMigration[] = [
   {
     name: '20261029140000_create_transactions_and_idempotency_keys',
     migration: createTransactionsAndIdempotencyKeys,
+  },
+  {
+    name: '20261029150000_decouple_transaction_idempotency_key',
+    migration: decoupleTransactionIdempotencyKey,
   },
 ];
 

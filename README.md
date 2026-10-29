@@ -22,7 +22,7 @@ Database migrations run automatically when the API starts. Postgres is published
 
 ## Tests
 
-Requires Node 24+, Yarn 1.x and a running Docker daemon (the e2e suite starts a throwaway Postgres container).
+Requires Node 22.22+ (or 24), Yarn 1.x and a running Docker daemon (the e2e suite starts a throwaway Postgres container).
 
 ```bash
 yarn install
@@ -30,7 +30,7 @@ yarn test        # unit + e2e
 yarn test:unit   # unit only, no Docker needed
 ```
 
-To run e2e tests against an existing database instead, set `TEST_DATABASE_URL`.
+To run e2e tests against your own database instead, set `TEST_DATABASE_URL` to an empty Postgres 16 database.
 
 ## Local development
 

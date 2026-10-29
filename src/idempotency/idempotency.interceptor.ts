@@ -8,9 +8,11 @@ import {
   type NestInterceptor,
   UnprocessableEntityException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Reflector } from '@nestjs/core';
 import type { Request, Response } from 'express';
 import { from, lastValueFrom, type Observable } from 'rxjs';
+import type { EnvironmentVariables } from '../config/env.validation.js';
 import { TransactionManager } from '../database/transaction-manager.js';
 import { hashRequest } from './request-hash.js';
 
@@ -21,8 +23,6 @@ export const IDEMPOTENT_STATUS = Symbol('IDEMPOTENT_STATUS');
 /** Printable ASCII without spaces, 1 to 255 chars: fits UUIDs, ULIDs and most client schemes. */
 const KEY_PATTERN = /^[\x21-\x7e]{1,255}$/;
 
-/** How long a duplicate waits for the in-flight original before giving up with 409. */
-const LOCK_TIMEOUT = '5s';
 const PG_LOCK_NOT_AVAILABLE = '55P03';
 
 interface IdempotencyKeyRow {
@@ -40,16 +40,19 @@ type Outcome =
  * Makes a POST safe to retry. The key is claimed and the handler's writes are
  * committed in ONE database transaction:
  *
- * - First request: inserts the key (the unique index is the lock), runs the
+ * - First request: inserts the key (the primary key is the lock), runs the
  *   handler in a savepoint, stores the response, commits everything together.
- * - Duplicate while the first is in flight: its insert blocks on the unique
- *   index until the first commits, then it replays the stored response. After
- *   LOCK_TIMEOUT it gets 409 instead of waiting forever.
+ * - Duplicate while the first is in flight: its insert blocks on the primary
+ *   key until the first commits, then it replays the stored response. After
+ *   IDEMPOTENCY_LOCK_TIMEOUT_MS it gets 409 instead of waiting forever.
  * - Duplicate after completion: replays the stored status and body with an
  *   `Idempotent-Replayed: true` header. The handler does not run.
  * - Same key, different method/path/body: 422.
- * - Handler fails with a 4xx: its writes roll back to the savepoint, the error
- *   is stored and replayed (a retry with the same key gets the same answer).
+ * - Request is malformed (400, e.g. validation): nothing ran, so nothing is
+ *   stored and the key stays free for the corrected request (as Stripe does).
+ * - Handler fails with another 4xx (404, 422): its writes roll back to the
+ *   savepoint, the error is stored and replayed, so a retry with the same key
+ *   gets the same answer.
  * - Handler fails with a 5xx or crashes: the whole transaction rolls back,
  *   including the key, so the client can retry the same key safely.
  *
@@ -61,6 +64,7 @@ export class IdempotencyInterceptor implements NestInterceptor {
   constructor(
     private readonly tm: TransactionManager,
     private readonly reflector: Reflector,
+    private readonly config: ConfigService<EnvironmentVariables, true>,
   ) {}
 
   intercept(ctx: ExecutionContext, next: CallHandler): Observable<unknown> {
@@ -103,7 +107,9 @@ export class IdempotencyInterceptor implements NestInterceptor {
   ): Promise<Outcome> {
     try {
       return await this.tm.run(async (trx) => {
-        await trx.raw(`set local lock_timeout = '${LOCK_TIMEOUT}'`);
+        // Integer from validated config, so safe to inline (SET does not take bind parameters).
+        const lockTimeoutMs = this.config.get('IDEMPOTENCY_LOCK_TIMEOUT_MS', { infer: true });
+        await trx.raw(`set local lock_timeout = '${lockTimeoutMs}ms'`);
         const claimed = await trx('idempotency_keys')
           .insert({ key, request_hash: hash })
           .onConflict('key')
@@ -128,7 +134,7 @@ export class IdempotencyInterceptor implements NestInterceptor {
           await this.store(key, successStatus, body);
           return { kind: 'response', status: successStatus, body, replayed: false };
         } catch (err) {
-          if (err instanceof HttpException && err.getStatus() < 500) {
+          if (isReplayableClientError(err)) {
             await this.store(key, err.getStatus(), err.getResponse());
             return { kind: 'error', exception: err, replayed: false };
           }
@@ -152,6 +158,13 @@ export class IdempotencyInterceptor implements NestInterceptor {
       // Stringified explicitly: pg would turn a top-level array into a Postgres array.
       .update({ response_status: status, response_body: JSON.stringify(body ?? null) });
   }
+}
+
+/** 4xx errors other than 400 are outcomes of executing the request, so they are kept. */
+function isReplayableClientError(err: unknown): err is HttpException {
+  if (!(err instanceof HttpException)) return false;
+  const status = err.getStatus();
+  return status >= 400 && status < 500 && status !== 400;
 }
 
 function replay(status: number, body: unknown): Outcome {

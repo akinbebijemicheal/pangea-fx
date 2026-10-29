@@ -30,3 +30,18 @@ describe('validateEnv', () => {
     expect(() => validateEnv({ DATABASE_URL, NODE_ENV: 'staging' })).toThrow(/NODE_ENV/);
   });
 });
+
+describe('validateEnv DB_MIGRATE_ON_BOOT', () => {
+  it('defaults to true', () => {
+    expect(validateEnv({ DATABASE_URL }).DB_MIGRATE_ON_BOOT).toBe(true);
+  });
+
+  it.each([
+    ['false', false],
+    ['true', true],
+  ])('parses %s', (raw, expected) => {
+    expect(validateEnv({ DATABASE_URL, DB_MIGRATE_ON_BOOT: raw }).DB_MIGRATE_ON_BOOT).toBe(
+      expected,
+    );
+  });
+});

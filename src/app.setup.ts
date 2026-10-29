@@ -22,7 +22,13 @@ export function buildOpenApiDocument(app: INestApplication): OpenAPIObject {
 export function configureApp(app: INestApplication): INestApplication {
   app.setGlobalPrefix(API_PREFIX, { exclude: ['health'] });
   app.useGlobalPipes(
-    new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+      // One message per field: the first rule that fails, not every rule.
+      stopAtFirstError: true,
+    }),
   );
   app.enableShutdownHooks();
   SwaggerModule.setup(DOCS_PATH, app, buildOpenApiDocument(app), {

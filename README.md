@@ -18,6 +18,8 @@ docker compose up --build
 - Health: http://localhost:3000/health
 - Swagger UI: http://localhost:3000/docs (raw spec at `/docs-json`)
 
+Database migrations run automatically when the API starts. Postgres is published on host port `5433` (override with `DB_PORT`) so it does not clash with a local Postgres on 5432.
+
 ## Tests
 
 Requires Node 24+, Yarn 1.x and a running Docker daemon (the e2e suite starts a throwaway Postgres container).
@@ -33,7 +35,15 @@ To run e2e tests against an existing database instead, set `TEST_DATABASE_URL`.
 ## Local development
 
 ```bash
-docker compose up -d db
+docker compose up -d db   # only the database; stop the compose api first if it holds port 3000
 cp .env.example .env
 yarn start:dev
+```
+
+Migrations can also be run by hand against the database in `.env`:
+
+```bash
+yarn build
+yarn migrate            # apply pending migrations
+yarn migrate:rollback   # roll back the last batch
 ```

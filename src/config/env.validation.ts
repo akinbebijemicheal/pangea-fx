@@ -1,5 +1,5 @@
-import { plainToInstance, Type } from 'class-transformer';
-import { IsIn, IsInt, IsString, Matches, Max, Min, validateSync } from 'class-validator';
+import { plainToInstance, Transform, Type } from 'class-transformer';
+import { IsBoolean, IsIn, IsInt, IsString, Matches, Max, Min, validateSync } from 'class-validator';
 
 export const NODE_ENVS = ['development', 'test', 'production'] as const;
 export type NodeEnv = (typeof NODE_ENVS)[number];
@@ -20,6 +20,16 @@ export class EnvironmentVariables {
     message: 'DATABASE_URL must be a postgres:// connection string',
   })
   DATABASE_URL!: string;
+
+  /** Run pending migrations when the API starts. */
+  // Reads the raw value from `obj`: implicit conversion has already turned the
+  // string "false" into Boolean("false") === true by the time `value` arrives.
+  @Transform(({ obj }: { obj: Record<string, unknown> }) => {
+    const raw = obj.DB_MIGRATE_ON_BOOT;
+    return raw === undefined ? true : raw === true || raw === 'true';
+  })
+  @IsBoolean()
+  DB_MIGRATE_ON_BOOT: boolean = true;
 }
 
 /**

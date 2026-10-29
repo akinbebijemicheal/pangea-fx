@@ -1,5 +1,14 @@
 ###############################################################################
-# Transaction history: newest first, filters, cursor pagination, lookup by id
+# Transaction history: newest first, filters, cursor pagination, analytics,
+# lookup by id
+#
+# Every list response has:
+#   data        the page (default 10 per page, any limit from 1 to 1000)
+#   nextCursor  pass as ?cursor= for the next page; null on the last page
+#   pagination  limit, totalCount, totalPages, hasMore
+#   summary     over ALL matching transactions (not just this page):
+#               transactionCount, countByType, debits and credits per
+#               currency with USD values, totalDebitUsd, totalCreditUsd, netUsd
 #
 # Requests 1-6 build a small history; the rest read it.
 ###############################################################################
@@ -70,7 +79,10 @@ Idempotency-Key: {{$guid}}
   "amount": "10"
 }
 
-### 7. A's full history, newest first, with direction in / out / self
+### 7. A's history, newest first, with direction in / out / self
+# Default page size 10. Look at "summary": 4 transactions (1 deposit, 1 swap,
+# 2 transfers), debits USDx 150 (100 swapped + 50 sent), credits USDx 500,
+# the cNGN bought and EURx 10 received, each with a USD value, and the net in USD.
 GET {{api}}/wallets/{{a.response.body.$.id}}/transactions
 
 ### 8. B's history: the same transfer from A shows as "in"
@@ -82,16 +94,22 @@ GET {{api}}/wallets/{{a.response.body.$.id}}/transactions?type=transfer
 ### 10. Filter by currency (matches either side of the movement)
 GET {{api}}/wallets/{{a.response.body.$.id}}/transactions?currency=cNGN
 
-### 11. Filters combine
+### 11. Filters combine, and the summary follows the filters
+# Both transfers touch EURx (A sent USDx that arrived as EURx; B sent EURx back):
+# count 2, debits USDx 50, credits EURx 10
 GET {{api}}/wallets/{{a.response.body.$.id}}/transactions?type=transfer&currency=EURx
 
 ### 12. Pagination: first page of 2
+# pagination: { limit: 2, totalCount: 4, totalPages: 2, hasMore: true }
 # @name page1
 GET {{api}}/wallets/{{a.response.body.$.id}}/transactions?limit=2
 
 ### 13. Next page, using nextCursor from the previous response
-# nextCursor is null on the last page
+# hasMore false and nextCursor null: this is the last page. Same summary as page 1.
 GET {{api}}/wallets/{{a.response.body.$.id}}/transactions?limit=2&cursor={{page1.response.body.$.nextCursor}}
+
+### 13b. A large page: any limit up to 1000
+GET {{api}}/wallets/{{a.response.body.$.id}}/transactions?limit=1000
 
 ### 14. One transaction by id
 GET {{api}}/transactions/{{sent.response.body.$.id}}
@@ -104,9 +122,9 @@ GET {{api}}/transactions/00000000-0000-4000-8000-000000000000
 # Expect 400 "cursor is invalid"
 GET {{api}}/wallets/{{a.response.body.$.id}}/transactions?cursor=abc
 
-### 17. Limit out of range (1-100)
-# Expect 400
-GET {{api}}/wallets/{{a.response.body.$.id}}/transactions?limit=500
+### 17. Limit out of range (1-1000)
+# Expect 400 "limit must be an integer between 1 and 1000"
+GET {{api}}/wallets/{{a.response.body.$.id}}/transactions?limit=5000
 
 ### 18. Unknown type
 # Expect 400 "type must be one of: deposit, swap, transfer"

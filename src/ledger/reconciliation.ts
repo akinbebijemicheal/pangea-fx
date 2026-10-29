@@ -54,3 +54,65 @@ export async function findDiscrepancies(
   );
   return result.rows;
 }
+
+export interface StatsDiscrepancy {
+  walletId: string;
+  direction: string;
+  type: string;
+  sourceCurrency: string;
+  destinationCurrency: string;
+  stored: string;
+  expected: string;
+}
+
+/**
+ * Recomputes the wallet_transaction_stats aggregates from the transaction log
+ * and returns every row that differs (count or either total). An empty result
+ * means history summaries are exact.
+ */
+export async function findStatsDiscrepancies(
+  db: Knex | Knex.Transaction,
+  walletIds?: readonly string[],
+): Promise<StatsDiscrepancy[]> {
+  const scoped = walletIds !== undefined;
+  const result = await db.raw<{ rows: StatsDiscrepancy[] }>(
+    `
+    with legs as (
+      select source_wallet_id as wallet_id, 'self' as direction, type, source_currency,
+             destination_currency, source_amount, destination_amount
+        from transactions where type = 'swap'
+      union all
+      select source_wallet_id, 'out', type, source_currency, destination_currency,
+             source_amount, destination_amount
+        from transactions where type = 'transfer'
+      union all
+      select destination_wallet_id, 'in', type, source_currency, destination_currency,
+             source_amount, destination_amount
+        from transactions where type in ('deposit', 'transfer')
+    ),
+    expected as (
+      select wallet_id, direction, type, source_currency, destination_currency,
+             count(*) as tx_count, sum(source_amount) as source_total,
+             sum(destination_amount) as destination_total
+        from legs
+       group by wallet_id, direction, type, source_currency, destination_currency
+    )
+    select coalesce(s.wallet_id, e.wallet_id) as "walletId",
+           coalesce(s.direction, e.direction) as "direction",
+           coalesce(s.type, e.type) as "type",
+           coalesce(s.source_currency, e.source_currency) as "sourceCurrency",
+           coalesce(s.destination_currency, e.destination_currency) as "destinationCurrency",
+           concat_ws(' / ', s.tx_count, s.source_total, s.destination_total) as "stored",
+           concat_ws(' / ', e.tx_count, e.source_total, e.destination_total) as "expected"
+      from wallet_transaction_stats s
+      full outer join expected e using (wallet_id, direction, type, source_currency, destination_currency)
+     where (s.tx_count is distinct from e.tx_count
+            or s.source_total is distinct from e.source_total
+            or s.destination_total is distinct from e.destination_total)
+       and (not ?::boolean or coalesce(s.wallet_id, e.wallet_id) = any(?::uuid[]))
+     order by 1, 2, 3, 4, 5
+    `,
+    [scoped, scoped ? [...walletIds] : []],
+  );
+  return result.rows;
+}

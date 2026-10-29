@@ -5,6 +5,8 @@ import * as createFxRates from './20261029120000_create_fx_rates.js';
 import * as addFxRateProvider from './20261029130000_add_fx_rate_provider.js';
 import * as createTransactionsAndIdempotencyKeys from './20261029140000_create_transactions_and_idempotency_keys.js';
 import * as decoupleTransactionIdempotencyKey from './20261029150000_decouple_transaction_idempotency_key.js';
+import * as createWalletTransactionStats from './20261029160000_create_wallet_transaction_stats.js';
+import * as tuneWalletTransactionStats from './20261029170000_tune_wallet_transaction_stats.js';
 
 interface NamedMigration {
   name: string;
@@ -28,6 +30,14 @@ export const MIGRATIONS: readonly NamedMigration[] = [
   {
     name: '20261029150000_decouple_transaction_idempotency_key',
     migration: decoupleTransactionIdempotencyKey,
+  },
+  {
+    name: '20261029160000_create_wallet_transaction_stats',
+    migration: createWalletTransactionStats,
+  },
+  {
+    name: '20261029170000_tune_wallet_transaction_stats',
+    migration: tuneWalletTransactionStats,
   },
 ];
 

@@ -106,7 +106,7 @@ yarn test:cov      # with coverage (about 90% of lines)
 
 The e2e suite starts a throwaway Postgres 16 container with Testcontainers, runs every migration, and tests the API over HTTP. To use your own database instead, set `TEST_DATABASE_URL` to an **empty** Postgres 16 database. If neither Docker nor `TEST_DATABASE_URL` is available, the suite stops with a message saying so.
 
-**312 tests** cover, among others:
+**323 tests** cover, among others:
 
 - **Concurrency**: 10 concurrent swaps or transfers of 15 against a balance of 100 (exactly 6 succeed); 30 opposite-direction transfers across currencies (no deadlock, value conserved); 10 concurrent wallet creations with the same email (exactly one 201).
 - **Idempotency**: replays, 10 concurrent identical requests (exactly one transaction), key reuse with a different body (422), a 400 not consuming the key, a 5xx releasing it, a duplicate waiting for the in-flight original, a 409 after the wait times out, key expiry.
@@ -122,7 +122,7 @@ The e2e suite starts a throwaway Postgres 16 container with Testcontainers, runs
 yarn build && yarn reconcile
 ```
 
-Recomputes every balance from the transaction log and exits 1, listing each mismatch, if any balance disagrees.
+Recomputes every balance and every history summary from the transaction log and exits 1, listing each mismatch, if anything disagrees.
 
 ---
 
@@ -132,20 +132,20 @@ Recomputes every balance from the transaction log and exits 1, listing each mism
 
 All examples below are **real responses** captured from the running stack (`docker compose up`) with live rates. Long ids are shortened for readability. Every `POST` that moves money needs an `Idempotency-Key` header.
 
-| Method | Path                                        | Purpose                                           |
-| ------ | ------------------------------------------- | ------------------------------------------------- |
-| POST   | `/api/v1/wallets`                           | Create a wallet (email and/or phone)              |
-| GET    | `/api/v1/wallets/lookup?email=` / `?phone=` | Find a wallet by contact                          |
-| GET    | `/api/v1/wallets/:id`                       | Wallet with balances                              |
-| GET    | `/api/v1/wallets/:id/balances`              | Balances with USD value per line and in total     |
-| POST   | `/api/v1/wallets/:walletId/deposits`        | Simulated deposit                                 |
-| POST   | `/api/v1/wallets/:walletId/swaps`           | Swap between stablecoins in one wallet            |
-| POST   | `/api/v1/wallets/:walletId/transfers`       | Send to another wallet, same or other currency    |
-| GET    | `/api/v1/wallets/:walletId/transactions`    | History: newest first, filters, cursor pagination |
-| GET    | `/api/v1/transactions/:id`                  | One transaction                                   |
-| GET    | `/api/v1/rates`                             | All 20 pair rates with source and refresh time    |
-| GET    | `/api/v1/currencies`                        | Supported stablecoins                             |
-| GET    | `/health`                                   | API and database health                           |
+| Method | Path                                        | Purpose                                                                 |
+| ------ | ------------------------------------------- | ----------------------------------------------------------------------- |
+| POST   | `/api/v1/wallets`                           | Create a wallet (email and/or phone)                                    |
+| GET    | `/api/v1/wallets/lookup?email=` / `?phone=` | Find a wallet by contact                                                |
+| GET    | `/api/v1/wallets/:id`                       | Wallet with balances                                                    |
+| GET    | `/api/v1/wallets/:id/balances`              | Balances with USD value per line and in total                           |
+| POST   | `/api/v1/wallets/:walletId/deposits`        | Simulated deposit                                                       |
+| POST   | `/api/v1/wallets/:walletId/swaps`           | Swap between stablecoins in one wallet                                  |
+| POST   | `/api/v1/wallets/:walletId/transfers`       | Send to another wallet, same or other currency                          |
+| GET    | `/api/v1/wallets/:walletId/transactions`    | History: newest first, filters, cursor pagination, totals and analytics |
+| GET    | `/api/v1/transactions/:id`                  | One transaction                                                         |
+| GET    | `/api/v1/rates`                             | All 20 pair rates with source and refresh time                          |
+| GET    | `/api/v1/currencies`                        | Supported stablecoins                                                   |
+| GET    | `/health`                                   | API and database health                                                 |
 
 ### 1. Create a wallet
 
@@ -340,18 +340,60 @@ curl 'localhost:3000/api/v1/wallets/'$ADA'/transactions?limit=2'
       "createdAt": "2026-10-29T14:20:43.671Z"
     }
   ],
-  "nextCursor": "eyJ0IjoiMjAyNi0xMC0yOSAxNDoyMDo0My42NzEzOTIrMDAiLCJpIjoiNGQ2MjQ3YzAtODgzYi00NjI5LWEzMjItY2I4NTEzYjNlNDA1In0"
+  "nextCursor": "eyJ0IjoiMjAyNi0xMC0yOSAxNDoyMDo0My42NzEzOTIrMDAiLCJpIjoiNGQ2MjQ3YzAtODgzYi00NjI5LWEzMjItY2I4NTEzYjNlNDA1In0",
+  "pagination": { "limit": 2, "totalCount": 4, "totalPages": 2, "hasMore": true },
+  "summary": {
+    "transactionCount": 4,
+    "countByType": { "deposit": 1, "swap": 1, "transfer": 2 },
+    "debits": [
+      { "currency": "USDx", "amount": "150.00000000", "usdValue": "150.00000000" },
+      "… one entry per currency, zero where nothing moved"
+    ],
+    "credits": [
+      { "currency": "cNGN", "amount": "134623.68880000", "usdValue": "99.99999999" },
+      { "currency": "cGHS", "amount": "20.00000000", "usdValue": "1.71822545" },
+      { "currency": "USDx", "amount": "500.00000000", "usdValue": "500.00000000" },
+      "…"
+    ],
+    "totalDebitUsd": "150.00000000",
+    "totalCreditUsd": "601.71822544",
+    "netUsd": "451.71822544",
+    "valuation": {
+      "source": "live",
+      "ratesAsOf": "2026-10-29T16:35:38.762Z",
+      "provider": "open.er-api.com"
+    }
+  }
 }
 ```
 
-(Each item also carries every other transaction field; trimmed here.)
+(Each item also carries every other transaction field, and `debits`/`credits` list all five currencies; trimmed here.)
 
 - Newest first. `direction` is relative to this wallet: `in` (deposit or transfer received), `out` (transfer sent) or `self` (swap).
-- Filters: `type=deposit|swap|transfer` and `currency=cNGN|…` (either side of the movement). They combine.
-- Pagination: `limit` (1–100, default 20) and `cursor=<nextCursor>`. `nextCursor` is `null` on the last page.
+- Filters: `type=deposit|swap|transfer` and `currency=cNGN|…` (either side of the movement). They combine, and apply to the summary too.
+- Pagination: `limit` (1–1000, **default 10**) and `cursor=<nextCursor>`. `pagination` gives `totalCount`, `totalPages` and `hasMore`; `nextCursor` is `null` on the last page.
+- `summary` covers **every transaction matching the filters across all pages**, so it is the same on every page: counts per type, totals debited and credited per currency with their USD value, and overall `totalDebitUsd`, `totalCreditUsd` and `netUsd`. USD values use current rates, named in `valuation`.
+- The cNGN line above is worth `99.99999999`, not `100`: the swap rounded down converting 100 USDx into cNGN, and the valuation rounds down again converting back. Rounding never creates value.
 - The receiving wallet sees the same transfer with `"direction": "in"`.
 
 `GET /api/v1/transactions/:id` returns a single transaction in the same shape, without `direction`.
+
+#### History performance
+
+The summary is not computed by scanning history. A Postgres trigger keeps running totals in `wallet_transaction_stats` (one row per wallet, direction, type and currency pair, so at most about 75 rows per wallet), updated in the same database transaction as each movement. Every filter maps onto those rows, so a summary reads a handful of rows however long the history is. The page itself is two LIMITed index scans merged by Postgres.
+
+Measured on a wallet with **100,000 transactions** (Docker, warm, median of 5 requests):
+
+| Request                                       | Time                          |
+| --------------------------------------------- | ----------------------------- |
+| First page (default 10) with full summary     | 17 ms                         |
+| First page, `limit=1000`                      | 28 ms                         |
+| A page ~90,000 rows deep, via cursor          | 11 ms                         |
+| Filtered by currency                          | 11 ms                         |
+| Database: summary read (stats rows)           | 0.2 ms                        |
+| Database: the naive `COUNT`/`SUM` it replaces | 55 ms, and grows with history |
+
+The stats table is updated on every movement, so it is tuned for that: `fillfactor = 50` lets updates happen in place (HOT: 94% of updates in the test), and autovacuum runs after a fixed number of dead rows. After 2,000 more concurrent deposits to the same wallet the read was still 0.25 ms with no dead rows. `yarn reconcile` and the randomised burst test check the stats against the transaction log.
 
 ### 7. Rates
 
@@ -418,6 +460,7 @@ erDiagram
     wallets ||--|{ balances : holds
     wallets ||--o{ transactions : "sends (source)"
     wallets ||--o{ transactions : "receives (destination)"
+    wallets ||--o{ wallet_transaction_stats : "summarised by"
 
     currencies {
         text code PK "cNGN, cGHS, cXAF, USDx, EURx"
@@ -461,6 +504,16 @@ erDiagram
         timestamptz provider_updated_at
         timestamptz refreshed_at
     }
+    wallet_transaction_stats {
+        uuid wallet_id PK
+        text direction PK "in, out, self"
+        text type PK
+        text source_currency PK
+        text destination_currency PK
+        bigint tx_count
+        numeric source_total
+        numeric destination_total
+    }
     idempotency_keys {
         text key PK
         char64 request_hash "sha256"
@@ -478,7 +531,8 @@ Design points:
 - **A `CHECK` constraint defines what each type may look like**: a deposit has no source wallet and rate 1, a swap stays in one wallet and changes currency, a transfer moves between two different wallets.
 - **Rates are stored as one quote per currency against USD** (5 rows, not 20 pairs). Every pair is derived from two quotes, so cross rates can never contradict each other.
 - **History reads** use `(wallet, created_at desc, id desc)` indexes on both sides of a transaction.
-- **Six migrations**, applied in order and never edited once applied. Each later change (moving currencies into a table, recording the rate provider, letting idempotency keys expire) is its own migration, tested for upgrade over existing data and for rollback.
+- **History summaries** come from `wallet_transaction_stats`, running totals kept by a trigger on `transactions` in the same database transaction, so they cost a few rows regardless of history length and can never drift from the log.
+- **Eight migrations**, applied in order and never edited once applied. Each later change (moving currencies into a table, recording the rate provider, letting idempotency keys expire, adding history summaries) is its own migration, tested for upgrade over existing data and for rollback.
 
 ---
 

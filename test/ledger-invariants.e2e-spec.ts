@@ -9,7 +9,7 @@ import { CURRENCIES, type Currency } from '../src/common/currency.js';
 import { Money } from '../src/common/money.js';
 import { KNEX } from '../src/database/database.constants.js';
 import { FxService } from '../src/fx/fx.service.js';
-import { findDiscrepancies } from '../src/ledger/reconciliation.js';
+import { findDiscrepancies, findStatsDiscrepancies } from '../src/ledger/reconciliation.js';
 import { uniqueEmail } from './support/fixtures.js';
 import { createTestApp } from './support/test-app.js';
 
@@ -173,6 +173,17 @@ describe('Ledger invariants under a randomised concurrent burst (e2e)', () => {
 
     // 1. Every balance equals the sum of its transactions.
     expect(await findDiscrepancies(db, wallets), context).toEqual([]);
+
+    // 1b. History summaries (the trigger-maintained aggregates) match the log exactly,
+    // and every wallet's totalCount equals a direct count of its transactions.
+    expect(await findStatsDiscrepancies(db, wallets), context).toEqual([]);
+    for (const w of wallets) {
+      const res = await http().get(`/api/v1/wallets/${w}/transactions`).expect(200);
+      const direct = await db('transactions')
+        .whereRaw('source_wallet_id = ? or destination_wallet_id = ?', [w, w])
+        .count<{ count: string }[]>('* as count');
+      expect(res.body.pagination.totalCount, context).toBe(Number(direct[0]!.count));
+    }
 
     // 2. No balance is negative.
     const negative = await db('balances').whereIn('wallet_id', wallets).where('amount', '<', 0);

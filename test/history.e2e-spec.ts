@@ -222,15 +222,26 @@ describe('Transaction history (e2e)', () => {
 
     it('returns an empty page for a wallet with no transactions', async () => {
       const res = await list(await newWallet()).expect(200);
-      expect(res.body).toEqual({ data: [], nextCursor: null });
+      expect(res.body).toMatchObject({
+        data: [],
+        nextCursor: null,
+        pagination: { limit: 10, totalCount: 0, totalPages: 0, hasMore: false },
+        summary: {
+          transactionCount: 0,
+          countByType: { deposit: 0, swap: 0, transfer: 0 },
+          totalDebitUsd: '0.00000000',
+          totalCreditUsd: '0.00000000',
+          netUsd: '0.00000000',
+        },
+      });
     });
 
     it.each([
       [{ type: 'refund' }, 'type must be one of: deposit, swap, transfer'],
       [{ currency: 'BTC' }, 'currency must be one of'],
-      [{ limit: 0 }, 'limit must be an integer between 1 and 100'],
-      [{ limit: 101 }, 'limit must be an integer between 1 and 100'],
-      [{ limit: 'ten' }, 'limit must be an integer between 1 and 100'],
+      [{ limit: 0 }, 'limit must be an integer between 1 and 1000'],
+      [{ limit: 1001 }, 'limit must be an integer between 1 and 1000'],
+      [{ limit: 'ten' }, 'limit must be an integer between 1 and 1000'],
       [{ cursor: 'garbage' }, 'cursor is invalid'],
       [{ page: 2 }, 'property page should not exist'],
     ])('rejects %j with 400', async (query, message) => {
@@ -244,6 +255,138 @@ describe('Transaction history (e2e)', () => {
 
     it('returns 400 for a malformed wallet id', async () => {
       await list('nope').expect(400);
+    });
+  });
+
+  describe('pagination and analytics', () => {
+    type Line = { currency: string; amount: string };
+    // Response bodies are untyped; narrow once here.
+    const line = (items: unknown, currency: string) =>
+      (items as Line[]).find((x) => x.currency === currency)?.amount;
+
+    it('defaults to 10 per page and reports totals across all pages', async () => {
+      const w = await newWallet();
+      for (let i = 0; i < 12; i++) {
+        await post(`/api/v1/wallets/${w}/deposits`, { currency: 'USDx', amount: '1' });
+      }
+      const first = await list(w).expect(200);
+      expect(first.body.data).toHaveLength(10);
+      expect(first.body.pagination).toEqual({
+        limit: 10,
+        totalCount: 12,
+        totalPages: 2,
+        hasMore: true,
+      });
+
+      const second = await list(w, { cursor: first.body.nextCursor as string }).expect(200);
+      expect(second.body.data).toHaveLength(2);
+      expect(second.body.pagination).toEqual({
+        limit: 10,
+        totalCount: 12,
+        totalPages: 2,
+        hasMore: false,
+      });
+      // The summary covers the whole filtered set, so it is identical on every page.
+      expect(second.body.summary).toEqual(first.body.summary);
+    });
+
+    it('accepts any page size up to 1000', async () => {
+      const w = await newWallet();
+      for (let i = 0; i < 3; i++) {
+        await post(`/api/v1/wallets/${w}/deposits`, { currency: 'USDx', amount: '1' });
+      }
+      const one = await list(w, { limit: 1 }).expect(200);
+      expect(one.body.pagination).toMatchObject({ limit: 1, totalCount: 3, totalPages: 3 });
+      const big = await list(w, { limit: 1000 }).expect(200);
+      expect(big.body.data).toHaveLength(3);
+      expect(big.body.pagination).toMatchObject({ limit: 1000, totalPages: 1, hasMore: false });
+    });
+
+    it('summarises counts and debit/credit totals per currency with USD values', async () => {
+      // A: deposit 100 USDx (in), swap 10 USDx -> 15000 cNGN (self),
+      //    send 20 USDx to B (out), receive 5 cGHS from B (in).
+      const s = await scenario();
+      const { summary } = (await list(s.a).expect(200)).body as {
+        summary: {
+          transactionCount: number;
+          countByType: Record<string, number>;
+          debits: { currency: string; amount: string; usdValue: string }[];
+          credits: { currency: string; amount: string; usdValue: string }[];
+          totalDebitUsd: string;
+          totalCreditUsd: string;
+          netUsd: string;
+          valuation: { source: string; provider: string };
+        };
+      };
+
+      expect(summary.transactionCount).toBe(4);
+      expect(summary.countByType).toEqual({ deposit: 1, swap: 1, transfer: 2 });
+      expect(summary.debits.map((d) => d.currency)).toEqual([
+        'cNGN',
+        'cGHS',
+        'cXAF',
+        'USDx',
+        'EURx',
+      ]);
+      expect(line(summary.debits, 'USDx')).toBe('30.00000000');
+      expect(line(summary.debits, 'cNGN')).toBe('0.00000000');
+      expect(line(summary.credits, 'USDx')).toBe('100.00000000');
+      expect(line(summary.credits, 'cNGN')).toBe('15000.00000000');
+      expect(line(summary.credits, 'cGHS')).toBe('5.00000000');
+      // 100 + 15000/1500 + 5/15 (rounded down) at the fake rates
+      expect(summary.totalDebitUsd).toBe('30.00000000');
+      expect(summary.totalCreditUsd).toBe('110.33333333');
+      expect(summary.netUsd).toBe('80.33333333');
+      expect(summary.valuation).toMatchObject({ source: 'live', provider: 'fake' });
+    });
+
+    it.each([
+      [{ type: 'transfer' }, 2, { USDx: '20.00000000' }, { cGHS: '5.00000000' }],
+      [{ currency: 'cNGN' }, 1, { USDx: '10.00000000' }, { cNGN: '15000.00000000' }],
+      [
+        { currency: 'USDx' },
+        3,
+        { USDx: '30.00000000' },
+        { USDx: '100.00000000', cNGN: '15000.00000000' },
+      ],
+      [{ type: 'swap', currency: 'cGHS' }, 0, {}, {}],
+    ])('applies the filters %j to the summary too', async (query, count, debits, credits) => {
+      const s = await scenario();
+      const res = await list(s.a, query).expect(200);
+      expect(res.body.pagination.totalCount).toBe(count);
+      expect(res.body.data).toHaveLength(count);
+      const nonZero = (items: unknown) =>
+        Object.fromEntries(
+          (items as Line[])
+            .filter((x) => x.amount !== '0.00000000')
+            .map((x) => [x.currency, x.amount]),
+        );
+      expect(nonZero(res.body.summary.debits)).toEqual(debits);
+      expect(nonZero(res.body.summary.credits)).toEqual(credits);
+    });
+
+    it('shows the other side of the same transfers from the receiver', async () => {
+      const s = await scenario();
+      const { summary } = (await list(s.b).expect(200)).body;
+      // B: deposit 50 cGHS (in), receive 20 USDx (in), send 5 cGHS (out).
+      expect(summary.countByType).toEqual({ deposit: 1, swap: 0, transfer: 2 });
+      expect(line(summary.credits, 'USDx')).toBe('20.00000000');
+      expect(line(summary.credits, 'cGHS')).toBe('50.00000000');
+      expect(line(summary.debits, 'cGHS')).toBe('5.00000000');
+    });
+
+    it('reports a totalCount equal to the rows actually listed, for every filter', async () => {
+      const s = await scenario();
+      const queries: Record<string, string>[] = [
+        {},
+        { type: 'deposit' },
+        { currency: 'USDx' },
+        { type: 'transfer', currency: 'cGHS' },
+      ];
+      for (const query of queries) {
+        const res = await list(s.a, { ...query, limit: 1000 }).expect(200);
+        expect(res.body.pagination.totalCount, JSON.stringify(query)).toBe(res.body.data.length);
+      }
     });
   });
 

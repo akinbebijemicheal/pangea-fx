@@ -379,10 +379,11 @@
             "name": "limit",
             "required": false,
             "in": "query",
+            "description": "Transactions per page",
             "schema": {
               "minimum": 1,
-              "maximum": 100,
-              "default": 20,
+              "maximum": 1000,
+              "default": 10,
               "type": "number"
             }
           },
@@ -1209,6 +1210,149 @@
           "direction"
         ]
       },
+      "PaginationDto": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "number",
+            "example": 10,
+            "description": "Page size used for this response"
+          },
+          "totalCount": {
+            "type": "number",
+            "example": 42,
+            "description": "Transactions matching the filters, across all pages"
+          },
+          "totalPages": {
+            "type": "number",
+            "example": 5,
+            "description": "ceil(totalCount / limit); 0 when there are none"
+          },
+          "hasMore": {
+            "type": "boolean",
+            "description": "Whether another page follows this one"
+          }
+        },
+        "required": [
+          "limit",
+          "totalCount",
+          "totalPages",
+          "hasMore"
+        ]
+      },
+      "CountByTypeDto": {
+        "type": "object",
+        "properties": {
+          "deposit": {
+            "type": "number",
+            "example": 3
+          },
+          "swap": {
+            "type": "number",
+            "example": 2
+          },
+          "transfer": {
+            "type": "number",
+            "example": 4
+          }
+        },
+        "required": [
+          "deposit",
+          "swap",
+          "transfer"
+        ]
+      },
+      "CurrencyTotalDto": {
+        "type": "object",
+        "properties": {
+          "currency": {
+            "type": "string",
+            "enum": [
+              "cNGN",
+              "cGHS",
+              "cXAF",
+              "USDx",
+              "EURx"
+            ],
+            "example": "USDx"
+          },
+          "amount": {
+            "type": "string",
+            "example": "120.00000000",
+            "description": "Exact total, 8 dp decimal string"
+          },
+          "usdValue": {
+            "type": "string",
+            "example": "120.00000000",
+            "description": "USD equivalent at current rates, rounded down to 8 dp"
+          }
+        },
+        "required": [
+          "currency",
+          "amount",
+          "usdValue"
+        ]
+      },
+      "HistorySummaryDto": {
+        "type": "object",
+        "properties": {
+          "transactionCount": {
+            "type": "number",
+            "example": 9,
+            "description": "Transactions matching the filters"
+          },
+          "countByType": {
+            "$ref": "#/components/schemas/CountByTypeDto"
+          },
+          "debits": {
+            "description": "Total debited from this wallet per currency (transfers sent, the sold side of swaps). One entry per supported currency.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CurrencyTotalDto"
+            }
+          },
+          "credits": {
+            "description": "Total credited to this wallet per currency (deposits, transfers received, the bought side of swaps). One entry per supported currency.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CurrencyTotalDto"
+            }
+          },
+          "totalDebitUsd": {
+            "type": "string",
+            "example": "120.00000000",
+            "description": "Sum of debits[].usdValue"
+          },
+          "totalCreditUsd": {
+            "type": "string",
+            "example": "600.33333333",
+            "description": "Sum of credits[].usdValue"
+          },
+          "netUsd": {
+            "type": "string",
+            "example": "480.33333333",
+            "description": "totalCreditUsd - totalDebitUsd (negative when more went out than came in)"
+          },
+          "valuation": {
+            "description": "The rates used for the USD values: current rates, not historical ones",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ValuationDto"
+              }
+            ]
+          }
+        },
+        "required": [
+          "transactionCount",
+          "countByType",
+          "debits",
+          "credits",
+          "totalDebitUsd",
+          "totalCreditUsd",
+          "netUsd",
+          "valuation"
+        ]
+      },
       "WalletTransactionsPageDto": {
         "type": "object",
         "properties": {
@@ -1223,11 +1367,24 @@
             "type": "string",
             "nullable": true,
             "description": "Pass as `cursor` to get the next page; null when there are no more"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/PaginationDto"
+          },
+          "summary": {
+            "description": "Analytics over every transaction matching the filters (all pages, not just this one). Read from running aggregates, so its cost does not grow with history length.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/HistorySummaryDto"
+              }
+            ]
           }
         },
         "required": [
           "data",
-          "nextCursor"
+          "nextCursor",
+          "pagination",
+          "summary"
         ]
       },
       "CreateSwapDto": {

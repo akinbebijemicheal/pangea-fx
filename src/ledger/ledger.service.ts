@@ -41,7 +41,13 @@ export class LedgerService {
     private readonly transactions: TransactionsRepository,
   ) {}
 
-  async move(m: Movement): Promise<TransactionDto> {
+  async move(movement: Movement): Promise<TransactionDto> {
+    // Postgres returns UUIDs in lower case; lock results are keyed by them.
+    const m: Movement = {
+      ...movement,
+      sourceWalletId: movement.sourceWalletId.toLowerCase(),
+      destinationWalletId: movement.destinationWalletId.toLowerCase(),
+    };
     const pair = await this.rateFor(m.sourceCurrency, m.destinationCurrency);
     const credited = convert(m.amount, pair?.rate ?? new Money(1));
     if (credited.isZero()) {

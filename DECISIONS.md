@@ -47,7 +47,7 @@ This file records the main technical decisions and the reasons for them. The REA
 - Balance rows are locked with `SELECT … FOR UPDATE` in a **fixed order** (by wallet id, then currency), so two transfers can never deadlock against each other.
 - A `CHECK (amount >= 0)` constraint on balances is the last line of defence against negative balances.
 - **Every query inside a request uses the request's own connection** (via `TransactionManager`). A request that holds a transaction and then asks the pool for a second connection can starve the pool: 10 concurrent swaps against a pool of 10 hung forever before this rule. The one exception is the shared FX rate write, which runs detached from any request on purpose. Knex's acquire timeout is 10s, so any regression fails loudly instead of hanging.
-- Swaps and transfers share one code path (`LedgerService.move`): stored rate, lock both rows, check funds, debit, credit, record.
+- Swaps and transfers share one code path (`LedgerService.move`): stored rate, lock both rows, check funds, debit, credit, record. Wallet ids are lower-cased first, so an upper-case UUID in a path or body is the same wallet (Postgres returns UUIDs in lower case).
 
 ### FX rate failures
 
@@ -81,32 +81,32 @@ This file records the main technical decisions and the reasons for them. The REA
 
 ## Brief coverage
 
-| Requirement (from the brief)                                                          | Status                                                                               |
-| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| Node.js LTS + TypeScript strict                                                       | Done. Node 22.22+ or 24 (Docker uses 24), `strict` plus extra checks.                |
-| Express or NestJS                                                                     | Done. NestJS 12.                                                                     |
-| SQL or MongoDB, justified                                                             | Done. PostgreSQL 16; reasoning above, README to repeat it.                           |
-| Cache/queue only where it earns its place                                             | Done. None used; cron jobs run in-process.                                           |
-| Jest/Vitest + Supertest                                                               | Done. Vitest + Supertest against real Postgres.                                      |
-| Yarn, ESLint, Prettier                                                                | Done, plus a pre-commit hook.                                                        |
-| `docker compose up` starts API and dependencies; migrations automatic or one command  | Done. Migrations and seed rates run on boot; `yarn migrate` also exists.             |
-| Create wallet by email or mobile; no duplicates                                       | Done. Normalised, unique in the DB, race-safe.                                       |
-| A balance per supported stablecoin                                                    | Done. Currencies table, one balance row each.                                        |
-| All balances plus total in USD                                                        | Done. `GET /wallets/:id/balances`.                                                   |
-| Deposit: balance updates immediately, transaction recorded                            | Done. Idempotent.                                                                    |
-| Swap within a wallet using FX rates                                                   | Done. `POST /wallets/:id/swaps`.                                                     |
-| Live FX preferred, fallback when the provider fails                                   | Done. Live, cache, fallback; daily cron.                                             |
-| Reject swaps that would go negative; never process the same request twice             | Done. Locked funds check (422) and idempotency.                                      |
-| Transfer between wallets, same or different currency, auto-convert                    | Step 6.                                                                              |
-| Record sender, receiver, both amounts and currencies, rate, timestamp                 | Done for swaps; transfers in step 6 use the same path.                               |
-| List a wallet's transactions newest first, paginated, filter by type and currency     | Step 7.                                                                              |
-| Fetch a transaction by id                                                             | Step 7.                                                                              |
-| Current rates between all stablecoins with refresh time                               | Done. `GET /rates`.                                                                  |
-| Conventional commit history                                                           | Done.                                                                                |
-| `yarn test` runs the full suite and passes                                            | Done. Needs Docker (or `TEST_DATABASE_URL`); a clear error explains this if missing. |
-| OpenAPI spec committed                                                                | Served at `/docs` now; committed file in step 9.                                     |
-| README: name, stack, DB choice, setup, tests, walkthrough, data model, money handling | Step 9. This file is the source.                                                     |
-| Assumptions, known limitations, what's next                                           | Step 9.                                                                              |
+| Requirement (from the brief)                                                          | Status                                                                                        |
+| ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Node.js LTS + TypeScript strict                                                       | Done. Node 22.22+ or 24 (Docker uses 24), `strict` plus extra checks.                         |
+| Express or NestJS                                                                     | Done. NestJS 12.                                                                              |
+| SQL or MongoDB, justified                                                             | Done. PostgreSQL 16; reasoning above, README to repeat it.                                    |
+| Cache/queue only where it earns its place                                             | Done. None used; cron jobs run in-process.                                                    |
+| Jest/Vitest + Supertest                                                               | Done. Vitest + Supertest against real Postgres.                                               |
+| Yarn, ESLint, Prettier                                                                | Done, plus a pre-commit hook.                                                                 |
+| `docker compose up` starts API and dependencies; migrations automatic or one command  | Done. Migrations and seed rates run on boot; `yarn migrate` also exists.                      |
+| Create wallet by email or mobile; no duplicates                                       | Done. Normalised, unique in the DB, race-safe.                                                |
+| A balance per supported stablecoin                                                    | Done. Currencies table, one balance row each.                                                 |
+| All balances plus total in USD                                                        | Done. `GET /wallets/:id/balances`.                                                            |
+| Deposit: balance updates immediately, transaction recorded                            | Done. Idempotent.                                                                             |
+| Swap within a wallet using FX rates                                                   | Done. `POST /wallets/:id/swaps`.                                                              |
+| Live FX preferred, fallback when the provider fails                                   | Done. Live, cache, fallback; daily cron.                                                      |
+| Reject swaps that would go negative; never process the same request twice             | Done. Locked funds check (422) and idempotency.                                               |
+| Transfer between wallets, same or different currency, auto-convert                    | Done. `POST /wallets/:id/transfers`; `toCurrency` defaults to `fromCurrency`.                 |
+| Record sender, receiver, both amounts and currencies, rate, timestamp                 | Done. One `transactions` row per movement, plus the rate's source, provider and refresh time. |
+| List a wallet's transactions newest first, paginated, filter by type and currency     | Step 7.                                                                                       |
+| Fetch a transaction by id                                                             | Step 7.                                                                                       |
+| Current rates between all stablecoins with refresh time                               | Done. `GET /rates`.                                                                           |
+| Conventional commit history                                                           | Done.                                                                                         |
+| `yarn test` runs the full suite and passes                                            | Done. Needs Docker (or `TEST_DATABASE_URL`); a clear error explains this if missing.          |
+| OpenAPI spec committed                                                                | Served at `/docs` now; committed file in step 9.                                              |
+| README: name, stack, DB choice, setup, tests, walkthrough, data model, money handling | Step 9. This file is the source.                                                              |
+| Assumptions, known limitations, what's next                                           | Step 9.                                                                                       |
 
 ## Build order (one conventional commit per step)
 

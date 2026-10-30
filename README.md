@@ -1,6 +1,8 @@
-# Pangea FX
+# PANGEA FX
 
-**A stablecoin-powered cross-border payment sandbox.** Multi-currency wallets, simulated deposits, FX swaps and wallet-to-wallet transfers across **cNGN, cGHS, cXAF, USDx and EURx**, with live exchange rates and exact money handling.
+**Operation Borderless: This is my mission and I choose to accept it**
+
+**Pangea FX is a stablecoin-powered cross-border payment sandbox.** Multi-currency wallets, simulated deposits, FX swaps and wallet-to-wallet transfers across **cNGN, cGHS, cXAF, USDx and EURx**, with live exchange rates and exact money handling.
 
 The name comes from Pangaea, the single supercontinent from before the borders: one ledger, no borders, which is the point of _Operation Borderless_.
 
